@@ -14,7 +14,7 @@ function [X_model, X_data] = ddra_linear(sys, lookup)
 
     %------------- BEGIN CODE --------------
 
-    rand('seed',1);  
+    rng(1, 'twister');  
 
     %% system dimensions
     dim_x = lookup.dim_x; 
