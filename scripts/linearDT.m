@@ -41,6 +41,6 @@ lookup_ddra = struct( ...
     'dim_u', dim_u ...
 );
 
-[X_true, X_est] = a_linear_full(sys_d, lookup_ddra);
+[X_true, X_est] = a_linear(sys_d, lookup_ddra);
 
     

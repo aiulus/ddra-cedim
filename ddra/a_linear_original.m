@@ -1,4 +1,4 @@
-function [outputArg1,outputArg2] = a_linear_full(sys, lookup)
+function [X_model, X_data] = a_linear_original(sys, lookup)
     %% Expects 
     %   * sys = c2d(.)
     %   * lookup = struct(
@@ -44,17 +44,17 @@ function [outputArg1,outputArg2] = a_linear_full(sys, lookup)
     G_u = diag(ones(dim_u, eta_u)); % Generator template for \calU_i
     
     c_u = lookup.c_u;
-    c_delta_u = zeros(dim_u, 1);
+    c_delta_u = lookup.c_delta_u;
     c_u = c_u + c_delta_u;
     
     U = zonotope(c_u, alpha_u*G_u);
     
     %% Compute W
-    c_w = zeros(dim_x,1);
-    alpha_w = 0.005;
-    eta_w = 1;
+    c_w = lookup.c_w;
+    alpha_w = lookup.alpha_w;
+    eta_w = lookup.eta_w;
     G_w = ones(dim_x, eta_w); % Generator template for W
-    W = zonotope(c_w, alpha_w*ones(dim_x,1));
+    W = zonotope(c_w, alpha_w*G_w);
     
     %Construct matrix zonotpe \mathcal{M}_w
     index=1;
@@ -86,7 +86,7 @@ function [outputArg1,outputArg2] = a_linear_full(sys, lookup)
         x(j:j+dim_x-1,1) = randPoint(X0);
         for i=1:n_k
             utraj(j,i) = u(index);
-            x(j:j+dim_x-1,i+1) = sys_d.A*x(j:j+dim_x-1,i) + sys_d.B*u(index) + randPoint(W);      
+            x(j:j+dim_x-1,i+1) = sys.A*x(j:j+dim_x-1,i) + sys.B*u(index) + randPoint(W);      
             index=index+1;
         end
     end
@@ -130,8 +130,8 @@ function [outputArg1,outputArg2] = a_linear_full(sys, lookup)
     % validate that A and B are within AB
     intAB11 = intervalMatrix(M_AB);
     intAB1 = intAB11.int;
-    intAB1.sup >= [sys_d.A,sys_d.B]
-    intAB1.inf <= [sys_d.A,sys_d.B]
+    intAB1.sup >= [sys.A,sys.B]
+    intAB1.inf <= [sys.A,sys.B]
     
     
     
@@ -147,7 +147,7 @@ function [outputArg1,outputArg2] = a_linear_full(sys, lookup)
     for i=1:totalsteps
         % 1) model-based computation
         X_model{i,1}=reduce(X_model{i,1},'girard',400);
-        X_model{i+1,1} = sys_d.A * X_model{i} + sys_d.B * U + W;
+        X_model{i+1,1} = sys.A * X_model{i} + sys.B * U + W;
         % 2) Data Driven approach
         X_data{i,1}=reduce(X_data{i,1},'girard',400);
         X_data{i+1,1} = M_AB * (cartProd(X_data{i},U)) + W; 
