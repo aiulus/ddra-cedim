@@ -143,16 +143,15 @@ function val = getfieldwithdefault(S, fname, defaultVal)
 end
 
 function [sys_out, params] = aux_set_p_gray(p, params, dyn)
-% Split p into physical params and U-center, then regenerate sys via custom_loadDynamics
-    % handle empty p_true case gracefully by letting dim_p=length(p)-nu be zero if needed
-    nu = params.U.dimension; % nrOfInputs
-    dim_p = max(length(p) - nu, 0);
-    p_dyn = p(1:dim_p);
-    cU    = p(dim_p+1:end);
+    % Rebuild the system with the first part of p as model parameters
+    % (CORA's example uses 'diag' here as well)
+    [sys_out, ~, ~, p_t] = custom_loadDynamics(dyn, "diag", p);
 
-    % (Re-)instantiate dynamics with updated parameters; use 'diag' like CORA example
-    [sys_out, ~, ~, p_t] = custom_loadDynamics(dyn, "diag", p_dyn);
-    % Shift U-center; keep original generators
+    % Remaining entries of p set the center of U
+    cU = p(length(p_t) + 1 : end);
+
+    % Keep U's generators, shift only its center
     params.U = zonotope(cU, params.U.generators);
 end
+
 % ------------------------------- END CODE --------------------------------
