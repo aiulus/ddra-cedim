@@ -17,9 +17,12 @@ function [X_model, X_data] = a_linear_original(sys, lookup)
     %------------- BEGIN CODE --------------
     
     rand('seed',1);
-    
+    %rng(1, 'twister'); % Updated seed
+
     %% system dynamics
-    dim_x = lookup.dim_x; dim_u = lookup.dim_u; dim_y = lookup.dim_y;
+    dim_x = lookup.dim_x;
+    dim_u = lookup.dim_u; 
+    dim_y = lookup.dim_y;
 
     n_s = lookup.n_s; % Number of samples per unique trajectory
     n_m = lookup.n_m; % Number of unique test cases (x0, u_{1:n_k})

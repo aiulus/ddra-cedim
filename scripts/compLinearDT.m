@@ -87,4 +87,4 @@ else
     [sys, params_true.R0, params_true.U] = custom_loadDynamics(dyn);
 end
 
-R = conformance_white(lookup_rcsi, conf_opts_white);
+%R = conformance_white(lookup_rcsi, conf_opts_white);
