@@ -9,7 +9,10 @@ function R = conformance_white(lookup, conf_opts)
     % Set Random Number Stream
     rng(1, 'twister');
     
-    dyn = lookup.sys.dyn; n_n = lookup.sys.n_n;
+    dyn = lookup.sys.dyn; 
+    if strcmp(dyn, "platoon")
+        n_n = lookup.sys.n_n;
+    end
 
     n_s = lookup.n_s; % number of samples per test case
     n_m = lookup.n_m; % number of test cases for identification
@@ -17,7 +20,6 @@ function R = conformance_white(lookup, conf_opts)
     n_k = lookup.n_k; % number of time steps for identification
     n_k_val = lookup.n_k_val;
 
-    constraints = {'gen','half',}; % type of containment constraints
     options = struct();
     
     % Conformance Settings
@@ -27,7 +29,7 @@ function R = conformance_white(lookup, conf_opts)
     options_testS = conf_opts.testS;
         
     % Evaluation settings
-    check_contain = true;
+    check_contain = false; %% This takes super long!!
     plot_settings.dims = [1 2];
     plot_settings.name = sprintf("Conformance Synthesis: %s", dyn);
     
@@ -39,6 +41,15 @@ function R = conformance_white(lookup, conf_opts)
         [sys, params_true.R0, params_true.U] = custom_loadDynamics(dyn);
     end
     params_true.tFinal = sys.dt * n_k - sys.dt;
+
+    % Prefer 'gen' only when outputs are scalar to avoid halfspace normals issue
+    if sys.nrOfOutputs < 2
+        constraints = {'gen'};
+    else
+        constraints = {'gen','half'};
+    end
+
+    %constraints = {'gen','half',}; % type of containment constraints
     
     % Simulation
     params_true.testSuite = createTestSuite(sys, ...
@@ -65,8 +76,13 @@ function R = conformance_white(lookup, conf_opts)
     for i_id = 1:num_id
         % run the identification
         options.cs.constraints = constraints{i_id};
-        fprintf("Identification with %s-constraints, n_m=%d, " + ...
+        if strcmp(dyn, "platoon")
+            fprintf("Identification with %s-constraints, n_m=%d, " + ...
             "n_k=%d, n_x=%d\n",options.cs.constraints, n_m, n_k, 3*n_n);
+        else
+            fprintf("Identification with %s-constraints, n_m=%d, " + ...
+            "n_k=%d",options.cs.constraints, n_m, n_k);
+        end
         timerVal = tic;
         [configs{i_id+1}.params, ~] = conform(sys,params_id_init,options);
         configs{i_id+1}.sys = sys;

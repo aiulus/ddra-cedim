@@ -142,7 +142,7 @@ function [X_model, X_data] = ddra_linear(sys, lookup)
     end
 
     %% visualization (unchanged)
-    projectedDims = {[1 2],[3 4],[4 5]};
+    projectedDims = lookup.plot_settings.projectedDims;
     aux_visualize_original(X0, X_model, X_data, projectedDims);
 end
 

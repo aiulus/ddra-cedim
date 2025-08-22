@@ -1,20 +1,13 @@
 %% 0. Define shared parameters
 % 0.1 Define the system
 % ---- DDRA Std. ----
-dim_x = 5;
-dim_u = 1;
-dim_y = 1;
-A = [-1 -4 0 0 0; 
-    4 -1 0 0 0; 
-    0 0 -3 1 0; 
-    0 0 -1 -3 0; 
-    0 0 0 0 -2];
-B_ss = ones(dim_x,dim_u);
-C = [1,0,0,0,0];
-D = 0;
-sys_c = ss(A,B_ss,C,D); % define continuous time system
-dt = 0.05;
-sys_ddra = c2d(sys_c,dt); % convert to discrete system
+dyn = "platoon";
+n_n = 2; % # vehicles in the platoon
+N_k = 120; % max(n_k, n_k_val)
+p = struct('n_n', n_n, 'N_k', N_k);
+type = "standard";
+[sys_cora, ~, ~] = custom_loadDynamics(dyn, type, p); % define continuous time system
+sys_ddra = cora_to_matlab_ss(sys_cora);
 
 % 0.2. Define hyperparameters
 lookup_ddra = struct( ...
@@ -44,7 +37,7 @@ lookup_ddra = struct( ...
 [X_true, X_est] = ddra_linear(sys_ddra, lookup_ddra);
 
 %% Rechset-Conformant System Identification
-dyn = "ddra5"; % dynamics (choose from "platoon", "pedestrian")
+dyn = "platoon"; % dynamics (choose from "platoon", "pedestrian")
 n_n = 2; % number of vehicles in the platoon
 dim_x = 6; dim_u = 2; dim_y = 6;
 
@@ -87,4 +80,4 @@ else
     [sys, params_true.R0, params_true.U] = custom_loadDynamics(dyn);
 end
 
-%R = conformance_white(lookup_rcsi, conf_opts_white);
+R = conformance_white(lookup_rcsi, conf_opts_white);

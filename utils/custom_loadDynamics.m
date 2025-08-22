@@ -1,4 +1,4 @@
-function [sys, R0, U, p_true] = loadDynamics(dynamics, type, p)
+function [sys, R0, U, p_true] = custom_loadDynamics(dynamics, type, p)
 % loadDynamics - load system dynamics and uncertainty sets
 %
 % Syntax:
@@ -77,6 +77,105 @@ switch dynamics
         U = zonotope([c_U,  G_U]);
     
         p_true = [];  % not used here
+
+        V = zonotope(zeros(size(C, 1),1));  % empty/degenerate V
+
+    case "ddra5_ident"
+        A = [-1 -4  0  0  0;
+              4 -1  0  0  0;
+              0  0 -3  1  0;
+              0  0 -1 -3  0;
+              0  0  0  0 -2];
+        B = ones(5,1);
+        C = ones(5,5);
+        D = zeros(5,1);
+        dt = 0.05;
+    
+        % Discretize via MATLAB c2d, then wrap as CORA linearSysDT
+        sysc = ss(A,B,C,D);
+        sysd = c2d(sysc, dt);
+        sys = linearSysDT(sysd.A, sysd.B, [], sysd.C, sysd.D, dt);
+    
+        % Uncertainty sets 
+        dim_x = 5; dim_u = 1;
+        c_R0 = zeros(dim_x,1);                
+        G_R0 = 0.1*eye(dim_x);                
+        c_U = 1.0*ones(dim_u,1);              
+        G_U = 0.25*eye(dim_u);                
+        R0 = zonotope([c_R0, G_R0]);
+        U = zonotope([c_U,  G_U]);
+    
+        p_true = [];  % not used here
+
+        V = zonotope(zeros(size(C, 1),1));  % empty/degenerate V
+
+    case "ddra5_2p"
+        A = [-1 -4  0  0  0;
+              4 -1  0  0  0;
+              0  0 -3  1  0;
+              0  0 -1 -3  0;
+              0  0  0  0 -2];
+        B = ones(5,1);
+        C = [1 0 0 0 0;
+             0 0 0 0 0];
+        D = zeros(2,1);
+        dt = 0.05;
+    
+        % Discretize via MATLAB c2d, then wrap as CORA linearSysDT
+        sysc = ss(A,B,C,D);
+        sysd = c2d(sysc, dt);
+        sys = linearSysDT(sysd.A, sysd.B, [], sysd.C, sysd.D, dt);
+    
+        % Uncertainty sets 
+        dim_x = 5; dim_u = 1;
+        c_R0 = zeros(dim_x,1);                
+        G_R0 = 0.1*eye(dim_x);                
+        c_U = 1.0*ones(dim_u,1);              
+        G_U = 0.25*eye(dim_u);                
+        R0 = zonotope([c_R0, G_R0]);
+        U = zonotope([c_U,  G_U]);
+    
+        p_true = [];  % not used here
+
+        V = zonotope(zeros(size(C, 1),1));  % empty/degenerate V
+
+
+    case "platoon"
+        % Platoon dynamics (linear time-varying) as in CORA example
+        % p can be a struct with fields:
+        %   p.N_v : number of vehicles (default 2)
+        %   p.N_k : horizon length used by platoonN (default 20)
+        %
+        % Note: 'type' is ignored for this case; no parameter vector p_true.
+        if nargin < 3 || ~isstruct(p)
+            p = struct();
+        end
+        if ~isfield(p,'n_n'); p.n_n = 2; end
+        if ~isfield(p,'N_k'); p.N_k = 20; end
+
+        dt = 0.5;              % discretization step
+        n_n = p.n_n;            % #vehicles
+        N_k = p.N_k;            % #time steps used to build LTV sys
+        N_u = n_n;              % inputs = vehicles
+        N_n = 3*n_n;            % states = 3 per vehicle
+
+        % Build CORA LTV system
+        sys = platoonN(dt, n_n, N_k);
+
+        c_R0 = randn(N_n,1);
+        for i = 0:n_n-1
+            % enforce positive initial spacing for each vehicle’s spacing state
+            c_R0(i*n_n + 2) = 3*abs(c_R0(i*n_n + 2));
+        end
+        alpha_R0 = 2*rand(N_n,1);
+        c_U  = randn(N_u,1);
+        alpha_U = rand(N_u,1);
+
+        R0 = zonotope([c_R0, diag(alpha_R0)]);
+        U  = zonotope([c_U,  diag(alpha_U)]);
+
+        p_true = [];   % no gray-box parameter vector
+
 
     case "pedestrian"
         % pedestrian model as a state-space model [1]

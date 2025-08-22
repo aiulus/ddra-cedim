@@ -21,5 +21,4 @@ function [sys, R0, U] = load_platoon(N_v,N_k)
     R0 = zonotope([c_R0,diag(alpha_R0)]);
     U = zonotope([c_U,diag(alpha_U)]);
     
-    
 end
