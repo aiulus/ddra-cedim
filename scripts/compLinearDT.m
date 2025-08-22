@@ -44,7 +44,7 @@ lookup_ddra = struct( ...
 [X_true, X_est] = ddra_linear(sys_ddra, lookup_ddra);
 
 %% Rechset-Conformant System Identification
-dyn = "platoon"; % dynamics (choose from "platoon", "pedestrian")
+dyn = "ddra5"; % dynamics (choose from "platoon", "pedestrian")
 n_n = 2; % number of vehicles in the platoon
 dim_x = 6; dim_u = 2; dim_y = 6;
 

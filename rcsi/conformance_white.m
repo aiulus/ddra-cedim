@@ -1,26 +1,7 @@
-function  conformance_linear(lookup, conf_opts)
-    
-    % example_linearSysDT_conform_04_LTV - example for conformance 
-    %   identification of nonlinear discrete-time systems to analyze the 
-    %   accuracy using simulated data
-    % 
-    %
-    % Syntax:
-    %    example_linearSysDT_conform_04_LTV
-    %
-    % Inputs:
-    %    -
-    %
-    % Outputs:
-    %    completed - true/false
-    %
-    % References:
-    %    [1]
-    
-    % Authors:       Laura Luetzow
-    % Written:       31-January-2024
-    % Last update:   ---
-    % Last revision: ---
+function R = conformance_white(lookup, conf_opts)
+        % Adapted from:  example_linearSysDT_conform_04_LTV (CORA Toolbox)
+    % Author:       Laura Luetzow (31-January-2024)    
+    % Refactor: Aybüke Ulusarslan (22-August-2025)
     
     % ------------------------------ BEGIN CODE -------------------------------
     
@@ -46,7 +27,7 @@ function  conformance_linear(lookup, conf_opts)
     options_testS = conf_opts.testS;
         
     % Evaluation settings
-    check_contain = false;
+    check_contain = true;
     plot_settings.dims = [1 2];
     plot_settings.name = sprintf("Conformance Synthesis: %s", dyn);
     
@@ -55,7 +36,7 @@ function  conformance_linear(lookup, conf_opts)
         [sys, params_true.R0, params_true.U] = load_platoon(n_n,...
             max(n_k,n_k_val));
     else
-        [sys, params_true.R0, params_true.U] = loadDynamics(dyn);
+        [sys, params_true.R0, params_true.U] = custom_loadDynamics(dyn);
     end
     params_true.tFinal = sys.dt * n_k - sys.dt;
     
@@ -109,7 +90,7 @@ function  conformance_linear(lookup, conf_opts)
         % (setting s_val leads to different color for validation test cases)
     
     % run validation and plotting
-    validateReach(testSuite{1}, configs, check_contain, plot_settings);
+    [R, eval] = validateReach(testSuite{1}, configs, check_contain, plot_settings);
     
     % example completed
     completed = true;

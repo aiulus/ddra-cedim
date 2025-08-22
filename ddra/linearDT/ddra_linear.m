@@ -24,6 +24,7 @@ function [X_model, X_data] = ddra_linear(sys, lookup)
     n_s = lookup.n_s;   % samples per test case
     n_m = lookup.n_m;   % number of test cases
     n_k = lookup.n_k;   % trajectory length per sample
+    n_k_val = lookup.n_k_val; %length of the evaluation trajectory
     totalsamples = n_m * n_s * n_k;  % total time-samples across all (m,s)
 
     %% initial-state uncertainty X0
@@ -126,13 +127,12 @@ function [X_model, X_data] = ddra_linear(sys, lookup)
     end
 
     %% propagate sets (unchanged)
-    propagation_steps = 5;
-    X_model = cell(propagation_steps+1,1);
-    X_data  = cell(propagation_steps+1,1);
+    X_model = cell(n_k_val+1,1);
+    X_data  = cell(n_k_val+1,1);
     X_model{1} = X0; 
     X_data{1}  = X0;
 
-    for i = 1:propagation_steps
+    for i = 1:n_k_val
         X_model{i,1}  = reduce(X_model{i,1}, 'girard', 400);
         X_model{i+1,1}= sys.A * X_model{i} + sys.B * U + W;
 
