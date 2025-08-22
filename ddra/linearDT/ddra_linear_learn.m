@@ -14,7 +14,8 @@ function M_AB = ddra_linear_learn(sys, lookup)
 
     %------------- BEGIN CODE --------------
 
-    rng(1, 'twister');  
+    rand('seed',1); % Original seed
+    %rng(1, 'twister');  
 
     %% system dimensions
     dim_x = lookup.dim_x; 
@@ -125,5 +126,72 @@ function M_AB = ddra_linear_learn(sys, lookup)
         disp('Validation passed: [A, B] is inside M_AB.');
     end
 
-    %------------- END CODE --------------
+end
+
+%--------------------------- END OF CODE ----------------------------
+
+%--------------------------- HELPER FUNCTIONS ----------------------------
+
+function aux_visualize_original(X0, X_model, X_data, projectedDims)
+    axx{1} = [0.75,1.5,0.5,4]; 
+    axx{2} = [0.75,3,0.8,2.2];
+    axx{3} = [0.75,2.3,0.75,2.8];
+    index=1;
+    numberofplots = 5;%length(X_model)
+    for plotRun=1:length(projectedDims)
+        figure('Renderer', 'painters', 'Position', [10 10 700 900])
+             
+        index=index+1;
+        % plot initial set
+        handleX0 = plot(X0,projectedDims{plotRun},'k-','LineWidth',2);
+        hold on;
+       
+        % plot reachable sets starting from index 2, since index 1 = X0
+        
+        % plot reachable sets from model
+        for iSet=2:numberofplots
+            handleModel=  plot(X_model{iSet},projectedDims{plotRun},'b','Filled',true,'FaceColor',[.8 .8 .8],'EdgeColor','b');
+        end
+        
+        % plot reachable sets from data
+        for iSet=2:numberofplots
+            handleData=   plot(X_data{iSet},projectedDims{plotRun},'r');
+        end
+        
+        % label plot
+        xlabel(['x_{',num2str(projectedDims{plotRun}(1)),'}']);
+        ylabel(['x_{',num2str(projectedDims{plotRun}(2)),'}']);
+        %axis(axx{plotRun});
+        % skip warning for extra legend entries
+        warOrig = warning; warning('off','all');
+        legend([handleX0,handleModel,handleData],...
+            'Initial Set','Set from Model','Set from Data','Location','northwest');
+        warning(warOrig);
+        ax = gca;
+        ax.FontSize = 22;
+        %set(gcf, 'Position',  [50, 50, 800, 400])
+        ax = gca;
+        outerpos = ax.OuterPosition;
+        ti = ax.TightInset;
+        left = outerpos(1) + ti(1);
+        bottom = outerpos(2) + ti(2);
+        ax_width = outerpos(3) - ti(1) - ti(3)-0.01;
+        ax_height = outerpos(4) - ti(2) - ti(4);
+        ax.Position = [left bottom ax_width ax_height];
+        %set(gcf, 'Units', 'Normalized', 'OuterPosition', [0, 0.04, 1, 0.96]);
+    end
+end
+
+function MZ = aux_buildMatrixZonotope(W, dim_x, totalsamples)
+    index=1; GW = cell(1, size(W.G,2) * totalsamples);
+    for i=1:size(W.G,2)
+        Z = [W.center, W.generators];
+        vec = Z(:,i+1);
+        GW{index} = [vec, zeros(dim_x, totalsamples-1)];
+        for j=1:totalsamples-1
+            GW{j+index} = [GW{index+j-1}(:,2:end) GW{index+j-1}(:,1)];
+        end
+        index = j + index + 1;
+    end
+    MZ = matZonotope(zeros(dim_x, totalsamples), GW);
 end
