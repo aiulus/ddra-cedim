@@ -211,3 +211,4 @@ function MZ = aux_buildMatrixZonotope(W, dim_x, totalsamples)
     end
     MZ = matZonotope(zeros(dim_x, totalsamples), GW);
 end
+

@@ -2,7 +2,7 @@ function R = conformance_gray(lookup, conf_opts)
 % CONFORMANCE_GRAY  Gray-box reachset-conformance wrapper.
 %   R = conformance_gray(lookup, conf_opts)
 %
-% Inputs (mirrors your conformance_white):
+% Inputs 
 %   lookup: struct with fields
 %       .sys.dyn   (string) dynamics key for custom_loadDynamics()
 %       .sys.n_n   (int)    optional (e.g., platoon vehicle count)
@@ -41,7 +41,8 @@ n_k_val = lookup.n_k_val;
 n_s_val = getfieldwithdefault(lookup, 'n_s_val', n_s);
 
 methodsGray = getfieldwithdefault(lookup, 'methodsGray', ["graySeq","grayLS","graySim"]);
-constraints = getfieldwithdefault(lookup, 'constraints', "half"); % "half" or "gen"
+%constraints = getfieldwithdefault(lookup, 'constraints', "half"); % "half" or "gen"
+constraints = "half";
 
 % Base options
 options_reach = conf_opts.options_reach;
@@ -103,7 +104,8 @@ end
 
 % ---- Validation & Visualization ----
 % Identification containment sanity-check on training data
-num_out = 0; check_contain = 1;
+num_out = 0; 
+check_contain = 0; % Takes forever if set to 1
 methodsList = ["true", methodsGray];
 for m=1:length(params_true.testSuite)
     [~, eval_id] = validateReach(params_true.testSuite{m}, configs, check_contain);
