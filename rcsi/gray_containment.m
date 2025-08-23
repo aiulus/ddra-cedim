@@ -1,0 +1,26 @@
+function [ctrain, cval, Tval] = gray_containment(configs, sys_cora, R0, U, C, pe)
+    optTS = ts_options_from_pe(C, pe);
+    optTS.stateSet = R0;    
+
+    params_true = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k-1));
+    params_true.testSuite = createTestSuite(sys_cora, params_true, C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
+    params_true.tFinal = sys_cora.dt*(C.shared.n_k_val-1);
+    TS_val = createTestSuite(sys_cora, params_true, C.shared.n_k_val, C.shared.n_m_val, C.shared.n_s_val, optTS);
+    
+    num_out=zeros(numel(configs),1); t0=tic;
+    for m=1:length(params_true.testSuite)
+        [~, eval_id] = validateReach(params_true.testSuite{m}, configs, 1); 
+        num_out = num_out + eval_id.num_out;
+    end
+    num_all_id  = length(params_true.testSuite)*C.shared.n_k*size(params_true.testSuite{1}.y,3);
+    ctrain = 100*(1 - num_out(2)/num_all_id);
+    
+    num_out_val=zeros(numel(configs),1);
+    for m=1:length(TS_val)
+        [~, eval_val] = validateReach(TS_val{m}, configs, 1);
+        num_out_val = num_out_val + eval_val.num_out;
+    end
+    num_all_val = length(TS_val)*C.shared.n_k_val*size(TS_val{1}.y,3);
+    cval = 100*(1 - num_out_val(2)/num_all_val);
+    Tval = toc(t0);
+end

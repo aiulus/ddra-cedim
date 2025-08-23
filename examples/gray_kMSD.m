@@ -81,6 +81,11 @@ options_reach.errorOrder         = 1;
 options_reach.tensorOrderOutput  = 2;
 options_reach.verbose            = false;
 
+options_testS.inputCurve = "randn";  % per-dt Gaussian samples
+options_testS.contInput  = false;    % no cumulative integral
+options_testS.stateSet   = params_true.R0;  % sample x0 from same X0
+
+
 conf_opts_gray = struct( ...
     'options_reach', options_reach, ...
     'cs', struct('robustnessMargin', 1e-9, 'cost', "interval", 'verbose', false), ...

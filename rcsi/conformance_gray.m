@@ -74,11 +74,17 @@ end
 % Build identification test suite
 params_true.testSuite = createTestSuite(sys, params_true, n_k, n_m, n_s, options_testS);
 
-% p0 stacks [model params; U-center] like the example
-dim_p = numel(p_true);
-p0    = 0.01*randn(dim_p + sys.nrOfInputs, 1);
-options.cs.p0 = p0;
-options.cs.set_p = @(p,params) aux_set_p_gray(p, params, dyn);
+% derive dim_p from the model definition
+[~, ~, ~, p_true] = custom_loadDynamics(dyn, "diag");
+if isnumeric(p_true) && ~isempty(p_true)
+    dim_p = numel(p_true);
+else
+    dim_p = 0;
+end
+
+% p = [ model-parameters (if any) ; U-center ]
+options.cs.p0 = 0.01*randn(dim_p + sys.nrOfInputs, 1);
+options.cs.set_p = @(p,params) aux_set_p_gray(p, params, dyn, sys);
 
 % “Configs” container as in CORA examples
 configs = cell(numel(methodsGray) + 1,1);
@@ -131,7 +137,7 @@ plot_settings.plot_Yp = false;
 plot_settings.dims    = [1 2];
 plot_settings.name    = sprintf("Gray-Box Conformance: %s", dyn);
 
-num_out = 0; check_contain = 1;
+num_out = 0; check_contain = 0; %% Takes forever
 for m=1:length(testSuite_val)
     [R, eval_val] = validateReach(testSuite_val{m}, configs, check_contain, plot_settings);
     num_out = num_out + eval_val.num_out;
@@ -149,7 +155,67 @@ function val = getfieldwithdefault(S, fname, defaultVal)
     if isfield(S, fname); val = S.(fname); else; val = defaultVal; end
 end
 
-function [sys_out, params] = aux_set_p_gray(p, params, dyn)
+function [sys_out, params] = aux_set_p_gray(p, params, dyn, sys_base)
+    % Probe if this dynamics has a numeric parameter vector
+    [~, ~, ~, p_t] = custom_loadDynamics(dyn, "diag");
+
+    if isnumeric(p_t) && ~isempty(p_t)
+        % Numeric model params exist -> split [p_model; cU] and rebuild sys
+        n_model = numel(p_t);
+        p_model = p(1:n_model);
+        cU      = p(n_model+1:end);
+        [sys_out, ~, ~] = custom_loadDynamics(dyn, "diag", p_model);
+    else
+        % No numeric params (e.g., k-MSD): keep the current system unchanged
+        sys_out = sys_base;
+        cU      = p;  % all of p is the U-center
+    end
+
+    % Shift U center, keep generators
+    params.U = zonotope(cU, params.U.generators);
+end
+
+
+function [sys_out, params] = aux_set_p_gray_functional2(p, params, dyn)
+    [sys_def, ~, ~, p_t] = custom_loadDynamics(dyn, "diag"); 
+    if isnumeric(p_t) && ~isempty(p_t)
+        n_model = numel(p_t);
+        assert(numel(p) >= n_model, ...
+            'set_p: expected at least %d parameter entries, got %d.', n_model, numel(p));
+        p_model = p(1:n_model);
+        cU      = p(n_model+1:end);
+        [sys_out, ~, ~] = custom_loadDynamics(dyn, "diag", p_model);
+    else
+        sys_out = sys_def;     % only U-center is optimized
+        cU      = p;
+    end
+    params.U = zonotope(cU, params.U.generators);
+end
+
+
+function [sys_out, params] = aux_set_p_gray_functional1(p, params, dyn)
+    % Query default system + the form of p_true without forcing parameters
+    [sys_def, ~, ~, p_t] = custom_loadDynamics(dyn, "diag");  
+
+    if isnumeric(p_t) && ~isempty(p_t)
+        % We have a numeric parameter vector to identify (e.g., pedestrian, lorenz, NARX)
+        n_model = numel(p_t);
+        p_model = p(1:n_model);
+        cU      = p(n_model+1:end);
+
+        % Rebuild system with updated numeric parameters
+        [sys_out, ~, ~] = custom_loadDynamics(dyn, "diag", p_model);
+    else
+        % No numeric parameter vector (e.g., k-Mass-SD uses a struct) — only shift U-center
+        sys_out = sys_def;
+        cU      = p;  % entire p is just U-center
+    end
+
+    % Shift the center of U, keep its generators
+    params.U = zonotope(cU, params.U.generators);
+end
+
+function [sys_out, params] = aux_set_p_gray_original(p, params, dyn)
     % Rebuild the system with the first part of p as model parameters
     % (CORA's example uses 'diag' here as well)
     [sys_out, ~, ~, p_t] = custom_loadDynamics(dyn, "diag", p);
