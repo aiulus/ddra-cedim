@@ -4,7 +4,7 @@ function R = conformance_gray(lookup, conf_opts)
 %
 % Inputs 
 %   lookup: struct with fields
-%       .sys.dyn   (string) dynamics key for custom_loadDynamics()
+%       .sys.dcheckyn   (string) dynamics key for custom_loadDynamics()
 %       .sys.n_n   (int)    optional (e.g., platoon vehicle count)
 %       .sys.type  (string) optional CORA uncertainty preset: "rand"|"diag"|"standard" (default "rand")
 %       .methodsGray (string array) optional, default ["graySeq","grayLS","graySim"]
@@ -116,7 +116,7 @@ end
 % ---- Validation & Visualization ----
 % Identification containment sanity-check on training data
 num_out = 0; 
-check_contain = 0; % Takes forever if set to 1
+check_contain = 1; % Takes forever if set to 1
 methodsList = ["true", methodsGray];
 for m=1:length(params_true.testSuite)
     [~, eval_id] = validateReach(params_true.testSuite{m}, configs, check_contain);
@@ -137,7 +137,7 @@ plot_settings.plot_Yp = false;
 plot_settings.dims    = [1 2];
 plot_settings.name    = sprintf("Gray-Box Conformance: %s", dyn);
 
-num_out = 0; check_contain = 0; %% Takes forever
+num_out = 0; check_contain = 1; %% Takes forever
 for m=1:length(testSuite_val)
     [R, eval_val] = validateReach(testSuite_val{m}, configs, check_contain, plot_settings);
     num_out = num_out + eval_val.num_out;
