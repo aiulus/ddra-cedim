@@ -4,9 +4,17 @@ function SUMMARY = run_sweeps(cfg, grid)
     
     [plots_dir, results_dir] = init_io(cfg);
     [axes, baseC] = init_sweep_axes(cfg, grid);
+
+    % Precompute total number of runs for preallocation
+    Ntot = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * ...
+           numel(axes.n_s) * numel(axes.n_k) * numel(axes.pe);
     
-    rows = struct([]);   
+    % We’ll fill this after we see the first row schema
+    hdr = {};
+    cells = [];         % Ntot x numFields (we will prealloc after first row)
     rowi = 0;
+
+    rows = struct([]);
     
     for D = axes.D
       for alpha_w = axes.alpha_w
@@ -40,14 +48,30 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % --- Log a row ---
                 rowi = rowi + 1;
-                rows(rowi) = pack_row(C, D, alpha_w, pe, ...
+                
+                row = pack_row(C, D, alpha_w, pe, ...
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
-                    Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g); %#ok<AGROW>
-    
-                % Overview text artifact
-                save_overview_text(plots_dir, sprintf('D%d_nm%d_ns%d_nk%d_pe%s',D,n_m,n_s,n_k,pe.mode), ...
-                    rows(rowi));
+                    Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+                
+                % Initialize schema & preallocate on first row
+                if rowi == 1
+                    hdr = fieldnames(orderfields(row))';   % canonical header order
+                    cells = cell(Ntot, numel(hdr));        % preallocate all rows
+                end
+                
+                % Extract row into cell array using the locked header order
+                for j = 1:numel(hdr)
+                    v = row.(hdr{j});
+                    if isstring(v), v = char(v); end  % strings -> char for robust CSV
+                    cells{rowi, j} = v;
+                end
+                
+                % Overview text artifact (if you still want it)
+                save_overview_text(plots_dir, ...
+                    sprintf('D%d_nm%d_ns%d_nk%d_pe%s', D,n_m,n_s,n_k,pe.mode), row);
+
+
     
               end
             end
@@ -57,7 +81,12 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
     
     % --- Save CSV ---
-    SUMMARY = struct2table(rows);
-    writetable(SUMMARY, fullfile(results_dir, 'summary.csv'));
-    fprintf('Sweeps done. Rows: %dCSV -> %s', height(SUMMARY), fullfile(results_dir,'summary.csv'));
+    csv_path = fullfile(results_dir, 'summary.csv');
+    writecell([hdr; cells(1:rowi,:)], csv_path);  % only rows we filled
+    fprintf('Sweeps done. Rows: %d\nCSV -> %s\n', rowi, csv_path);
+    
+    % (Optional) If you still want a MATLAB table in memory:
+    % SUMMARY = cell2table(cells(1:rowi,:), 'VariableNames', hdr);
+    % writetable(SUMMARY, csv_path);   % slower than writecell
+    SUMMARY = cell2table(cells(1:rowi,:), 'VariableNames', hdr);
 end

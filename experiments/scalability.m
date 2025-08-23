@@ -26,15 +26,15 @@ cfg.shared.cs_base = struct( ...
     'constraints', "half");
 
 % Data budgets (fixed)
-%cfg.shared.n_m     = 3;    % input traj count
-%cfg.shared.n_s     = 20;   % samples per traj
-%cfg.shared.n_k     = 4;    % horizon (train)
-%cfg.shared.n_m_val = 2;    % val traj count
-
-cfg.shared.n_m     = 2;    % input traj count
-cfg.shared.n_s     = 2;   % samples per traj
-cfg.shared.n_k     = 2;    % horizon (train)
+cfg.shared.n_m     = 3;    % input traj count
+cfg.shared.n_s     = 20;   % samples per traj
+cfg.shared.n_k     = 4;    % horizon (train)
 cfg.shared.n_m_val = 2;    % val traj count
+
+%cfg.shared.n_m     = 2;    % input traj count
+%cfg.shared.n_s     = 2;   % samples per traj
+%cfg.shared.n_k     = 2;    % horizon (train)
+%cfg.shared.n_m_val = 2;    % val traj count
 
 cfg.shared.n_s_val = cfg.shared.n_s;
 cfg.shared.n_k_val = cfg.shared.n_k;
@@ -51,7 +51,7 @@ cfg.gray.methodsGray = ["graySeq"];
 % ---------- Sweep grid (vary only D) ----------
 sweep_grid = struct();
 %sweep_grid.D_list       = [2 3 4 5 6];       % dimensional scalability
-sweep_grid.D_list       = [2 3];
+sweep_grid.D_list       = [2 3 4 5 6];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list     = cfg.shared.n_m;
 sweep_grid.n_s_list     = cfg.shared.n_s;
