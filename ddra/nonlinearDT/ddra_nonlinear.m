@@ -10,6 +10,7 @@ function [R_true, R_data, out] = ddra_nonlinear(sys, lookup)
 % ---------- 0) Unpack  ----------
 rand('seed',1);
 dim_x = lookup.dim_x; dim_u = lookup.dim_u;
+
 n_s = lookup.n_s; n_m = lookup.n_m; n_k = lookup.n_k; n_k_val = lookup.n_k_val;
 totalsamples = n_m * n_s * n_k;
 
@@ -140,7 +141,7 @@ if isfield(lookup,'compute_model_reach') && lookup.compute_model_reach
         opt.dim_x = dim_x; opt.zonotopeOrder = getf(lookup,{'reach','zonotopeOrder'},100);
         opt.tensorOrder = getf(lookup,{'reach','tensorOrder'},2); opt.errorOrder = getf(lookup,{'reach','errorOrder'},5);
         opt.W = W; opt.tStart = 0; opt.uTrans = 0;
-        [R_true, ~] = reach_DT(sys, params, opt); %#ok<NASGU>
+        [R_true, ~] = reach_DT(sys, params, opt); 
     catch
         % leave R_true = []
     end
@@ -212,7 +213,7 @@ function aux_visualize(X0, R_true, R_data, projectedDims, numberofplots)
         xlabel(sprintf('x_{%d}',dims(1)));
         ylabel(sprintf('x_{%d}',dims(2)));
 
-        % Build legend matching what we actually plotted
+        % Build legend
         legHandles = hX0;
         legNames   = {'Initial Set'};
         if ~isempty(hModel), legHandles = [legHandles, hModel]; legNames{end+1} = 'Set from Model'; end

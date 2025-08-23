@@ -20,16 +20,20 @@ function R = conformance_gray(lookup, conf_opts)
 %   R: results from validateReach (containment stats + plots)
 %
 % Notes:
-%   - Implements GraySim & GraySeq/GrayLS as in the paper’s Sec. V (Alg. 2 & 3). :contentReference[oaicite:1]{index=1}
 %   - Falls back to white-box if p_true is empty and you only want to size U’s center.
 %
-% Author:  Aybüke Ulusarslan (22-Aug-2025)
+% Adapted from: example_nonlinearSysDT_conform_02_gray.m (CORA Toolbox)
+% Authors:       Laura Luetzow
+% Written:       14-September-2023
+% Author:  
+% Refactor: Aybüke Ulusarslan (22-Aug-2025)
 
 % ------------------------------ BEGIN CODE -------------------------------
-rng(1,'twister'); % keep seed aligned with your pipeline
+rng(1,'twister'); 
 
 % Unpack lookup
-dyn   = lookup.sys.dyn;
+sys   = lookup.sys;
+dyn = lookup.dyn;
 n_n   = getfieldwithdefault(lookup.sys, 'n_n', []);
 ldtyp = getfieldwithdefault(lookup.sys, 'type', "rand");
 
@@ -48,12 +52,6 @@ constraints = "half";
 options_reach = conf_opts.options_reach;
 options_testS  = conf_opts.testS;
 
-% Load dynamics + default sets
-if dyn == "platoon"
-    [sys, params_true.R0, params_true.U] = load_platoon(n_n, max(n_k, n_k_val));
-else
-    [sys, params_true.R0, params_true.U, p_true] = custom_loadDynamics(dyn, ldtyp);
-end
 if ~exist('p_true','var'); p_true = []; end
 params_true.tFinal = sys.dt * n_k - sys.dt;
 
@@ -61,13 +59,20 @@ if sys.nrOfOutputs < 2
         constraints = {'gen'};
 end
 
-% Build identification test suite
-params_true.testSuite = createTestSuite(sys, params_true, n_k, n_m, n_s, options_testS);
-
 % Identification options (gray-box)
 options = options_reach;
 options.cs = conf_opts.cs;
 options.cs.constraints = constraints;
+
+if isfield(lookup, 'R0') 
+    params_true.R0 = lookup.R0;
+end
+if isfield(lookup, 'U')
+    params_true.U = lookup.U;
+end
+
+% Build identification test suite
+params_true.testSuite = createTestSuite(sys, params_true, n_k, n_m, n_s, options_testS);
 
 % p0 stacks [model params; U-center] like the example
 dim_p = numel(p_true);

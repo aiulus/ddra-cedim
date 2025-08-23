@@ -9,7 +9,6 @@ function [sysDisc, lookup] = cora_to_ddra_nonlinear(dynamics, type, overrides)
 %
 % Notes:
 %   - Works for CORA nonlinear classes (nonlinearSysDT / nonlinearDT / nonlinearARX).
-%   - For linear systems, this will error and nudge you to use ddra_linear instead.
 %   - You can pass overrides: any fields in 'overrides' are merged into 'lookup'.
 
     if nargin < 2 || isempty(type), type = "standard"; end
@@ -59,12 +58,10 @@ function [sysDisc, lookup] = cora_to_ddra_nonlinear(dynamics, type, overrides)
 
     % Time step & fun handle (if available on the object)
     try lookup.dt = sys.dt;      catch, end
-    try lookup.fun = sys.f;      catch, end  % ddra_nonlinear will ask for lookup.fun if needed
+    try lookup.fun = sys.f;      catch, end  
 
-    % 5) Merge user overrides last
     lookup = local_merge(lookup, overrides);
 
-    % 6) Return the system object as-is (reach_DT accepts CORA nonlinear types)
     sysDisc = sys;
 end
 

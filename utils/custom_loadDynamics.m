@@ -51,6 +51,126 @@ if nargin == 1
 end
 
 switch dynamics
+    case {"k-Mass-SD", "kMSD"}
+        % Mass–Spring–Damper chain with D masses and fixed ends
+        % Model matches the definition: ground damping b_i, natural lengths l_i,
+        % left wall X_0 = 0, right wall X_{D+1} = L.
+        %
+        % p can be a scalar D or a struct with fields:
+        %   p.k     : number of masses D (default 3)
+        %   p.m     : mass(es) [scalar or D-vector] (default 1)
+        %   p.k_s   : spring constants k_0..k_D [scalar or (D+1)-vector] (default 1)
+        %   p.c_d   : ground damping b_1..b_D [scalar or D-vector] (default 0.1)
+        %   p.l     : natural lengths l_0..l_D [scalar or (D+1)-vector] (default 0)
+        %   p.L     : right-wall position X_{D+1}=L (default 0)
+        %   p.dt    : sampling time (default 0.01)
+        %
+        % States: z = [q; v] in R^{2D}, with q = x - xbar (deflection)
+        % Inputs: u in R^{D} (one force per mass)
+        % Output: full state [q; v]
+
+        % --- parse parameters ---
+        if nargin < 3 || isempty(p), p = 3; end
+        if isnumeric(p)
+            D = round(p);
+            p = struct('k', D, 'm', 1, 'k_s', 1, 'c_d', 0.1, 'l', 0, 'L', 0, 'dt', 0.01);
+        elseif isstruct(p)
+            if ~isfield(p,'k'),   p.k   = 3;    end
+            if ~isfield(p,'m'),   p.m   = 1;    end
+            if ~isfield(p,'k_s'), p.k_s = 1;    end
+            if ~isfield(p,'c_d'), p.c_d = 0.1;  end
+            if ~isfield(p,'l'),   p.l   = 0;    end
+            if ~isfield(p,'L'),   p.L   = 0;    end
+            if ~isfield(p,'dt'),  p.dt  = 0.01; end
+        else
+            error('Parameter p must be a scalar (k) or a struct.');
+        end
+
+        D   = p.k;
+        dt  = p.dt;
+
+        % Broadcast scalars to vectors
+        m   = p.m;   if isscalar(m),   m   = m   * ones(D,1);     else, m = m(:);   end
+        cds = p.c_d; if isscalar(cds), cds = cds * ones(D,1);     else, cds = cds(:); end
+        ks  = p.k_s; if isscalar(ks),  ks  = ks  * ones(D+1,1);   else, ks  = ks(:);  end
+        l   = p.l;   if isscalar(l),   l   = l   * ones(D+1,1);   else, l   = l(:);   end
+        Lw  = p.L;
+
+        % --- stiffness (fixed ends) ---
+        % K = tridiag with diagonal ks(1:D) + ks(2:D+1), off-diagonals -ks(2:D)
+        main = ks(1:D) + ks(2:D+1);
+        off  = -ks(2:D);
+        Kc   = diag(main) + diag(off,1) + diag(off,-1);
+
+        % --- ground damping (diagonal) ---
+        Cc = diag(cds);
+
+        % --- mass matrix ---
+        M  = diag(m);
+
+        % --- affine load from natural lengths & right wall X_{D+1}=L ---
+        s = zeros(D,1);
+        % s_1 = k_0 l_0 - k_1 l_1
+        s(1) = ks(1)*l(1) - ks(2)*l(2);
+        % s_i = k_{i-1}l_{i-1} - k_i l_i, 2..D-1
+        if D >= 3
+            idx = 2:(D-1);
+            s(idx) = ks(idx).*l(idx) - ks(idx+1).*l(idx+1);
+        end
+        % s_D = k_{D-1}l_{D-1} - k_D l_D - k_D * L
+        s(D) = ks(D)*l(D) - ks(D+1)*l(D+1) - ks(D+1)*Lw;
+
+        % --- equilibrium shift: Kc * xbar = s ---
+        % (Kc is SPD for ks>0 with fixed ends)
+        xbar = Kc \ s;
+
+        % --- first-order LTI around q = x - xbar ---
+        ZD = zeros(D); ID = eye(D);
+        A_c = [ZD, ID; - (M \ Kc), - (M \ Cc)];
+        B_c = [ZD;    M \ ID];
+        C_c = eye(2*D);
+        D_c = zeros(2*D, D);
+
+        % --- discretize (ZOH) ---
+        sysc = ss(A_c, B_c, C_c, D_c);
+        sysd = c2d(sysc, dt);
+
+        % Wrap as CORA linearSysDT; state is z = [q; v]
+        sys  = linearSysDT(sysd.A, sysd.B, [], sysd.C, sysd.D, dt);
+
+        % --- default uncertainty sets (same style as your pattern) ---
+        dim_x = 2*D;
+        dim_u = D;
+        switch type
+            case "standard"
+                c_R0 = zeros(dim_x,1);
+                G_R0 = 0.1*eye(dim_x);
+                c_U  = zeros(dim_u,1);
+                G_U  = 0.2*eye(dim_u);
+
+            case "diag"
+                c_R0 = 0.05*randn(dim_x,1);
+                G_R0 = 0.05*eye(dim_x);
+                c_U  = 0.05*randn(dim_u,1);
+                G_U  = 0.1*eye(dim_u);
+
+            case "rand"
+                c_R0 = 0.1*randn(dim_x,1);
+                G_R0 = 0.05*randn(dim_x, max(2, ceil(dim_x/6)));
+                c_U  = 0.1*randn(dim_u,1);
+                G_U  = 0.05*randn(dim_u, max(2, ceil(dim_u/3)));
+
+            otherwise
+                error('Unknown type "%s". Use "standard", "diag", or "rand".', string(type));
+        end
+
+        R0 = zonotope([c_R0, G_R0]);
+        U  = zonotope([c_U,  G_U]);
+
+        % Expose true parameters (and shift) for downstream use
+        p_true = struct('m',m,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'xbar',xbar);
+
+
     case "ddra5"
         A = [-1 -4  0  0  0;
               4 -1  0  0  0;
@@ -175,8 +295,7 @@ switch dynamics
         U  = zonotope([c_U,  diag(alpha_U)]);
 
         p_true = [];   % no gray-box parameter vector
-
-
+    
     case "pedestrian"
         % pedestrian model as a state-space model [1]
         p_true = [1 0.01 5e-5 0.01]';

@@ -15,7 +15,7 @@ dyn  = "lorenz";
 type = "rand";  % for the DDRA comparison block
 [sys_cora, ~, ~] = custom_loadDynamics(dyn, type);
 %% TODO conversion method from loadDynamics()
-[sys_ddra, handle] = cora_to_ddra_nonlinear(dyn,"standard");
+[sys_ddra, handle] = cora_to_ddra_nonlinear(dyn, type);
 
 dim_x = sys_cora.nrOfStates;
 dim_u = sys_cora.nrOfInputs;    
@@ -72,7 +72,7 @@ lookup_gray = struct( ...
     'n_k', 4, ...
     'n_k_val', 4, ...
     ... % methods + constraints (can override)
-    'methodsGray', ["graySeq","grayLS","graySim"], ...
+    'methodsGray', ["graySim"], ... % Default: ["graySeq","grayLS","graySim"]
     'constraints', "half" ...
 );
 
