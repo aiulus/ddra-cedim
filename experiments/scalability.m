@@ -93,6 +93,11 @@ cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metri
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
+% --- shared noise policy to keep DDRA/Gray comparable when not studying noise
+cfg.shared.noise_for_gray = false;   % if false => Gray/RCSI runs with W = 0
+cfg.shared.noise_for_ddra = true;    % DDRA uses W unless this is set to false
+
+
 % ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
 

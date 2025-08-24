@@ -1,0 +1,110 @@
+%% HOW TO USE (Lipschitz / Nonlinear Sample-Size Sweep)
+% What it does:
+%   Uses the scalable Lipschitz MSD system ("kLipMSD") and sweeps n_m
+%   (number of distinct input trajectories). Produces fidelity/conservatism
+%   plots for RCSI black-box identification (GP/CGP). Runtime is recorded too.
+%
+% Key knobs:
+%   - sweep_grid.n_m_list (e.g., [2 4 8 16 32])
+%   - Fix dimension via sweep_grid.D_list = <D>;
+%   - Keep excitation fixed: sweep_grid.pe_list = {struct('mode','randn')};
+%
+% Memory-efficiency toggles:
+%   cfg.lowmem.append_csv = true;       % stream rows to CSV
+%
+% Outputs:
+%   - CSV + plots via init_io() under experiments/results/{data,plots}/<tag>_sweeps
+
+rng(1,'twister');
+
+% ---------- Minimal cfg ----------
+cfg = struct();
+cfg.io = struct('save_tag', 'kLipMSD_sample_size_sweep');
+
+% System & shared options
+cfg.shared = struct();
+cfg.shared.dyn   = "kLipMSD";      % <-- nonlinear Lipschitz system
+cfg.shared.type  = "standard";     % uncertainty preset (your custom_loadDynamics)
+cfg.shared.p_extr = 0.3;           % test-suite extreme input prob
+
+% CORA reachability options (used by validateReach / reach)
+cfg.shared.options_reach = struct( ...
+    'zonotopeOrder',      100, ...
+    'tensorOrder',        2, ...
+    'errorOrder',         1, ...
+    'tensorOrderOutput',  2, ...
+    'verbose',            false);
+
+% Conformance (RCSI) base options
+cfg.shared.cs_base = struct( ...
+    'robustnessMargin', 1e-9, ...
+    'verbose', false, ...
+    'cost', "interval", ...
+    'constraints', "half");
+
+% Data budgets
+cfg.shared.n_m     = 3;   % identification: # input trajectories
+cfg.shared.n_s     = 10;  % samples per input trajectory
+cfg.shared.n_k     = 6;   % horizon (train)
+cfg.shared.n_m_val = 2;   % validation: # input trajectories
+cfg.shared.n_s_val = cfg.shared.n_s;
+cfg.shared.n_k_val = cfg.shared.n_k;
+
+% Black-box RCSI methods (you can include one or both)
+cfg.black = struct();
+cfg.black.methodsBlack = ["blackGP"];   % or ["blackGP","blackCGP"]
+
+% (We keep explicit process noise out for apples-to-apples unless you study noise.)
+cfg.shared.noise_for_gray = false;
+
+% --- method label for filenames
+rcsi_lbl = "blackGP";                 % if multiple, plots use the first
+if numel(cfg.black.methodsBlack) > 0
+    rcsi_lbl = char(cfg.black.methodsBlack(1));
+end
+cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
+
+% ---------- Sweep grid ----------
+sweep_grid = struct();
+sweep_grid.D_list       = 4;           % dimension of the MSD chain (q,v -> 2D states)
+sweep_grid.n_m_list     = [2 4 8 16];  % <-- sweep here
+sweep_grid.n_s_list     = cfg.shared.n_s;
+sweep_grid.n_k_list     = cfg.shared.n_k;
+sweep_grid.pe_list      = {struct('mode','randn','order',2,'strength',1,'deterministic',true)};
+
+% ---------- Low-memory toggles ----------
+cfg.lowmem = struct();
+cfg.lowmem.append_csv = true;          % stream CSV rows
+
+% ---------- Run ----------
+SUMMARY = run_sweeps_lip_rcsi(cfg, sweep_grid);
+
+% ---------- Plots (Fidelity + Conservatism vs n_m) ----------
+x_nm        = coerce_numeric(SUMMARY.n_m);
+cval_bb     = coerce_numeric(SUMMARY.cval_black);
+sizeI_bb    = coerce_numeric(SUMMARY.sizeI_black);
+
+colors = struct('bb',[0.2 0.55 0.3]);
+
+f = figure('Name','Lipschitz | Fidelity & Conservatism vs n_m','Color','w');
+tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
+
+% (1) Fidelity (containment on validation)
+nexttile; hold on; grid on;
+plot(x_nm, cval_bb, '-o', 'Color',colors.bb, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl]);
+xlabel('n_m (input trajectories)'); ylabel('Containment on validation (%)');
+title(['Fidelity vs n_m  (RCSI: ' rcsi_lbl ', kLipMSD)']); legend('Location','best');
+
+% (2) Conservatism proxy (aggregated interval size)
+nexttile; hold on; grid on;
+plot(x_nm, sizeI_bb, '-s', 'Color',colors.bb, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl]);
+xlabel('n_m (input trajectories)'); ylabel('Aggregated interval size (proxy)');
+title(['Conservatism vs n_m  (RCSI: ' rcsi_lbl ', kLipMSD)']); legend('Location','best');
+
+% Save
+[plots_dir, ~] = init_io(cfg);
+save_plot(f, plots_dir, ['lip_fid_cons_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
+
+close all force

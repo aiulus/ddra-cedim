@@ -65,6 +65,11 @@ cfg.gray.methodsGray = ["grayLS"];
 rcsi_lbl = rcsi_label_from_cfg(cfg);                
 cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);  
 
+% --- shared noise policy to keep DDRA/Gray comparable when not studying noise
+cfg.shared.noise_for_gray = false;   % if false => Gray/RCSI runs with W = 0
+cfg.shared.noise_for_ddra = true;    % DDRA uses W unless this is set to false
+
+
 % ---------- Sweep grid ----------
 sweep_grid = struct();
 sweep_grid.D_list       = [2];

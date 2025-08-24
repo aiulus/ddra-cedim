@@ -61,7 +61,7 @@ switch dynamics
         %
         % Here Kc is the usual chain stiffness (fixed ends), Cc ground damping.
         % The onsite term Knl*tanh(Gamma*q) is odd, saturating, and has bounded slope:
-        %   d/dq [Knl*tanh(Gamma*q)] = Knl * diag( Gamma .* sech^2(Gamma.*q) )  ⪯  Knl*Gamma.
+        %   d/dq [Knl*tanh(Gamma*q)] = Knl * diag( Gamma .* sech^2(Gamma.*q) )  <=  Knl*Gamma.
         % Hence the vector field is globally Lipschitz (linear part + bounded-slope nonlinearity).
         %
         % p: scalar D or struct with fields:
@@ -172,7 +172,7 @@ switch dynamics
         %   p.c_d   : ground damping b_1..b_D [scalar or D-vector] (default 0.1)
         %   p.l     : natural lengths l_0..l_D (default 0)
         %   p.L     : right-wall position (default 0)
-        %   p.gamma : onsite cubic coeffs γ_i >=0 [scalar or D-vector] (default 0.2)
+        %   p.gamma : onsite cubic coeffs Gamma_i >=0 [scalar or D-vector] (default 0.2)
         %   p.dt    : sampling time (default 0.01)
 
         if nargin < 3 || isempty(p), p = 3; end

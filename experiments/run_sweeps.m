@@ -72,9 +72,22 @@ function SUMMARY = run_sweeps(cfg, grid)
                 clear Xminus Uminus Xplus W  % free data blocks early
 
                 % ================= GRAY =================
+
+                % ================= Start: New Patch =================
+                % Force W=0 for Gray/RCSI if requested (keeps fair comparison when not studying noise)
+                W_for_gray = W;
+                if isfield(C.shared,'noise_for_gray') && ~C.shared.noise_for_gray
+                    W_for_gray = zonotope(zeros(size(center(W),1),1)); % zero disturbance
+                end
+
                 t3 = tic;
-                configs  = gray_identify(sys_cora, R0, U, C, pe);
+                configs = gray_identify(sys_cora, R0, U, C, pe, 'overrideW', W_for_gray);
                 Tlearn_g = toc(t3);
+                % ================= End: New Patch =================
+
+                %t3 = tic;
+                %configs  = gray_identify(sys_cora, R0, U, C, pe);
+                %Tlearn_g = toc(t3);
 
                 [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
                     configs, sys_cora, R0, U, C, pe, 'check_contain', LM.gray_check_contain);
