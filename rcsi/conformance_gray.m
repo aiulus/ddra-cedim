@@ -48,6 +48,12 @@ methodsGray = getfieldwithdefault(lookup, 'methodsGray', ["graySeq","grayLS","gr
 %constraints = getfieldwithdefault(lookup, 'constraints', "half"); % "half" or "gen"
 constraints = "half";
 
+% Optional toggles -- currently not in use
+%chk_id  = getfieldwithdefault(conf_opts, 'check_contain_id', 0); % default fast
+%chk_val = getfieldwithdefault(conf_opts, 'check_contain_val', 1); % default as in paper
+%do_plot = getfieldwithdefault(conf_opts, 'plot', false);
+plot_settings = getfieldwithdefault(conf_opts, 'plot_settings', struct());
+
 % Base options
 options_reach = conf_opts.options_reach;
 options_testS  = conf_opts.testS;
