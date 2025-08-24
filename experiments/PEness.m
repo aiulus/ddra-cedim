@@ -38,6 +38,15 @@ sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
 ];
 
+
+% New: Memory efficiency toggles
+cfg.lowmem = struct();
+cfg.lowmem.gray_check_contain = false;   % don’t do expensive Gray containment
+cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metrics on the fly
+cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
+cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
+
+
 SUMMARY = run_sweeps(cfg, sweep_grid);
 
 % --- Plots: fidelity/conservatism vs PE order, per shape
@@ -74,3 +83,5 @@ plot(SUMMARY.pe_order, SUMMARY.t_gray_infer,'-^','DisplayName','infer');
 xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
 
 disp('PE sweep done.');
+
+close all force

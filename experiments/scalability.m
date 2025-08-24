@@ -124,3 +124,4 @@ xlabel('Dimension D'); ylabel('Seconds'); title('Inference phase'); grid on; leg
 exportgraphics(gcf, fullfile(plots_dir, sprintf('%s_runtime_vs_D.png', cfg.io.save_tag)), 'Resolution', 200);
 exportgraphics(gcf, fullfile(plots_dir, sprintf('%s_runtime_vs_D.pdf', cfg.io.save_tag)), 'ContentType','vector');
 
+close all force

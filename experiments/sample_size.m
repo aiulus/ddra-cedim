@@ -144,3 +144,4 @@ exportgraphics(f2, out2_pdf, 'ContentType','vector');
 
 disp(['Saved fidelity/conservatism panels -> ' out2_png]);
 
+close all force
