@@ -1,59 +1,73 @@
 function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U, W, M_AB, C)
 % Like ddra_infer, but never stores Xsets; accumulates size proxy & MC contain on the fly.
+% Uses a fast, LP-free point-in-zonotope tester to avoid polytope blow-ups.
 
     n_k_val = C.shared.n_k_val;
     X = R0;
     sizeI_ddra = 0;
     contain = 0; total = 0;
 
-    % small MC batch per step
-    Nmc = getfielddef(C,'mc_batch', 50);
+    % MC budget (memory-friendly). Allow override via cfg.lowmem.ddra_mc
+    LM = getfielddef(C,'lowmem',struct());
+    Nmc = getfielddef(LM,'ddra_mc', getfielddef(C,'mc_batch', 20));  % default 20
 
-    % cap order for memory if present
-    zOrd = getfielddef(C.shared.options_reach,'zonotopeOrder',100);
-    zOrd = min(100, zOrd);
+    % Optional: cap order for stability (only for visualization-size intermediates)
+    ordCap = getfielddef(LM,'zonotopeOrder_cap', ...
+               getfielddef(C.shared.options_reach,'zonotopeOrder',100));
 
     for k = 1:n_k_val
         % propagate one step with M_AB
-        X = reduce(X, 'girard', zOrd);
+        X = reduce(X,'girard', min(100, ordCap));
         Xnext = M_AB * cartProd(X, U) + W;
 
-        % --- interval size proxy (works for both matZonotope and zonotope)
-        [lo, hi] = local_interval_bounds(Xnext);
-        sizeI_ddra = sizeI_ddra + sum(abs(hi(:) - lo(:)));
+        % accumulate interval size proxy
+        Iv = interval(Xnext);                % works for zonotope/matzonotope images
+        sizeI_ddra = sizeI_ddra + sum(abs(Iv.sup(:) - Iv.inf(:)));
 
-        % --- on-the-fly MC containment (single-step)
-        for i = 1:Nmc
-            x0 = randPoint(R0); u = randPoint(U); w = randPoint(W);
-            x1 = sys.A*x0 + sys.B*u + w;
-            if contains(Xnext, x1, 'approx', 1e-6), contain = contain + 1; end
-            total = total + 1;
+        % on-the-fly MC containment (fast, LP-free)
+        if Nmc > 0
+            for i = 1:Nmc
+                x0 = randPoint(R0); u = randPoint(U); w = randPoint(W);
+                x1 = sys.A*x0 + sys.B*u + w;
+
+                if fast_contains_zonotope_point(Xnext, x1, 1e-3, 1e-6)
+                    contain = contain + 1;
+                end
+                total = total + 1;
+            end
         end
 
         X = Xnext;  % step forward
     end
-    contain_pct = 100 * contain / max(1, total);
+
+    if total > 0
+        contain_pct = 100 * contain / total;
+    else
+        contain_pct = NaN;   % MC disabled
+    end
 end
 
-% --- helpers --------------------------------------------------------------
-function [lo, hi] = local_interval_bounds(S)
-    % matZonotope -> use intervalMatrix, then pull .int.inf/.sup
-    if isa(S, 'matZonotope')
-        BM = intervalMatrix(S);      % struct with .int.inf/.sup
-        lo = BM.int.inf; hi = BM.int.sup;
+% ---------- helpers ----------
+function inside = fast_contains_zonotope_point(Z, x, tol_coeff, tol_resid)
+% Conservative, LP-free membership test for Z = c + G * B_inf:
+%   Solve xi_hat = pinv(G)*(x-c); accept if ||xi_hat||_inf <= 1+tol and
+%   residual small. This never returns false-positives (only possible false-negatives).
+
+    c = center(Z);
+    G = generators(Z);   % CORA returns [] if no gens
+
+    if isempty(G)
+        inside = (norm(x - c, inf) <= tol_coeff);
         return
     end
 
-    % zonotope / polyZonotope / interval -> use interval(S)
-    try
-        IV = interval(S);            % returns object/struct with .inf/.sup
-        lo = IV.inf; hi = IV.sup;
-    catch
-        % some CORA versions also support [lo,hi] = interval(S)
-        try
-            [lo, hi] = interval(S);
-        catch ME
-            error('Could not obtain interval bounds for object of class %s: %s', class(S), ME.message);
-        end
-    end
+    rhs = x - c;
+    xi  = pinv(G) * rhs;                 % least-squares coefficients
+    res = norm(G*xi - rhs, 2);           % linear residual
+
+    inside = (max(abs(xi)) <= 1 + tol_coeff) && (res <= tol_resid);
+end
+
+function val = getfielddef(S, fname, defaultVal)
+    if isstruct(S) && isfield(S, fname); val = S.(fname); else; val = defaultVal; end
 end

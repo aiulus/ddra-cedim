@@ -36,10 +36,13 @@ n_k_train = iff(isfield(lookup,'n_k_train'), lookup.n_k_train, 4);
 methodsBlack = string(iff(isfield(lookup,'methodsBlack'), lookup.methodsBlack, ["blackGP","blackCGP"]));
 constraints  = string(iff(isfield(lookup,'constraints'),  lookup.constraints,  "half"));
 
+% Required option structs
+assert(isfield(conf_opts,'options_reach'), 'conf_opts.options_reach is required.');
+assert(isfield(conf_opts,'cs'),            'conf_opts.cs is required.');
 options_reach = conf_opts.options_reach;
-options_testS = conf_opts.testS;
+options_testS = iff(isfield(conf_opts,'testS'), conf_opts.testS, struct());
 
-% ----- GP/CGP options (with sensible defaults) -----
+% ----- GP/CGP options (with sensible, reproducible defaults) -----
 approx = struct();
 approx.gp_parallel       = false;
 approx.gp_pop_size       = 50;
@@ -50,7 +53,8 @@ approx.gp_max_depth      = 2;
 approx.cgp_num_gen       = 5;
 approx.cgp_pop_size_base = 5;
 approx.save_res          = false;
-approx.p                 = 0;   % set below from sys.n_p if ARX-like
+approx.p                 = 0;     % set below for ARX/NARX if needed
+approx.rng_seed          = 1;     % help reproducibility inside GP/CGP
 if isfield(conf_opts,'approx')
     fn = fieldnames(conf_opts.approx);
     for i=1:numel(fn), approx.(fn{i}) = conf_opts.approx.(fn{i}); end
@@ -65,98 +69,73 @@ end
 params_true.tFinal = sys.dt * n_k - sys.dt;
 
 % ----- Build identification / train / validation suites -----
-params_true.testSuite        = createTestSuite(sys, params_true, n_k,       n_m,      n_s,      options_testS);
+params_true.testSuite        = createTestSuite(sys, params_true, n_k,       n_m,       n_s,      options_testS);
 params_true.testSuite_train  = createTestSuite(sys, params_true, n_k_train, n_m_train, n_s_train);
-params_true.testSuite_val    = createTestSuite(sys, params_true, n_k_val,   n_m_val,   n_s_val, options_testS);
-
-% ----- If ARX-like (nrOfDims==0), create a shell SS model with dim = dim_y * p -----
-is_arx_like = (sys.nrOfDims == 0);
-if is_arx_like
-    dim_y  = sys.nrOfOutputs;
-    dim_u  = sys.nrOfInputs;
-    p_dim  = max(1, getfielddef(sys, 'n_p', 1));   % ARX order (default to 1)
-    dim_x  = dim_y * p_dim;
-
-    A_sh  = eye(dim_x);
-    B_sh  = zeros(dim_x, dim_u);
-    C_sh  = eye(dim_y, dim_x);
-    D_sh  = zeros(dim_y, dim_u);
-    dt_sh = sys.dt;
-
-    sys_eff = linearSysDT(A_sh, B_sh, [], C_sh, D_sh, dt_sh);
-    R0_eff  = zonotope(zeros(dim_x,1));
-
-    % If user didn't set approx.p, make learned model stateful with same p
-    if ~isfield(approx,'p') || isempty(approx.p) || approx.p==0
-        approx.p = p_dim;
-    end
-else
-    sys_eff = sys;                 % keep original stateful system
-    R0_eff  = params_true.R0;
-end
+params_true.testSuite_val    = createTestSuite(sys, params_true, n_k_val,   n_m_val,   n_s_val,  options_testS);
 
 % ----- Identification options (conformance + approximator) -----
-options            = options_reach;
-options.cs         = conf_opts.cs;
-options.cs.constraints = constraints;
-options.approx     = approx;
+options                  = options_reach;
+options.cs               = conf_opts.cs;
+options.cs.constraints   = constraints;
+options.approx           = approx;
 
 % ----- Config container (like CORA examples) -----
 configs = cell(numel(methodsBlack) + 1, 1);
 configs{1}.sys     = sys;
-configs{1}.params  = rmfield(params_true,'testSuite');   % keep R0, U, tFinal
+configs{1}.params  = rmfield(params_true,'testSuite');   % keep R0, U, tFinal, *_train/val
 configs{1}.options = options_reach;
 configs{1}.name    = "true";
 
-% ----- Initial params for conform(): keep all test suites; fix R0/U dims to sys_eff -----
-params_id_init               = params_true;  % KEEP testSuite, *_train, *_val
-params_id_init.R0            = R0_eff;
-
-dim_u_eff = sys_eff.nrOfInputs;
-cU        = center(params_true.U);
-if numel(cU) ~= dim_u_eff, cU = zeros(dim_u_eff,1); end
-params_id_init.U             = zonotope([cU(:), eye(dim_u_eff), ones(dim_u_eff,1)]);
-
 % Optional: ensure GPTIPS 'extract.m' is preferred over MATLAB's built-in
 if exist('prefer_gptips_extract','file') == 2
-    prefer_gptips_extract();  %#ok<*UNRCH>
+    prefer_gptips_extract();
 end
+
+% ----- Prepare params for conform() (ARX/NARX vs state-space) -----
+params_id_init = params_true;            % KEEP testSuite, *_train, *_val
+sys_eff        = sys;                     % always use the real system (no shell SS)
+
+if sys.nrOfDims == 0
+    % ARX/NARX: R0 must be 0-dim, and approximator needs an order p
+    params_id_init.R0 = zonotope(zeros(0,1));
+    if ~isfield(options,'approx') || ~isfield(options.approx,'p') || isempty(options.approx.p) || options.approx.p == 0
+        options.approx.p = max(1, getfielddef(sys,'n_p',1));
+    end
+else
+    % state-space: use provided R0
+    params_id_init.R0 = params_true.R0;
+end
+
+% Harmonize U to system input dimension (interval template about center)
+dim_u_eff = sys.nrOfInputs;
+cU        = center(params_true.U);
+if numel(cU) ~= dim_u_eff, cU = zeros(dim_u_eff,1); end
+params_id_init.U = zonotope([cU(:), eye(dim_u_eff)]);
 
 % ----- Run black-box identification (GP → CGP) -----
 for i = 1:numel(methodsBlack)
     type = string(methodsBlack(i));
     fprintf("Identification with method %s \n", type);
 
-    % Defensive re-harmonization before each call
-    params_id_init.R0 = R0_eff;
-    cU = center(params_true.U);
-    if numel(cU) ~= dim_u_eff, cU = zeros(dim_u_eff,1); end
-    params_id_init.U  = zonotope([cU(:), eye(dim_u_eff), ones(dim_u_eff,1)]);
-
-    % -------------------- PATCH --------------------
-    % ----- If ARX-like (nrOfDims==0), use the original system and 0-dim R0
-    is_arx_like = (sys.nrOfDims == 0);
-    
-    sys_eff = sys;             % always use the real system for blackCGP
-    if is_arx_like
-        params_id_init.R0 = zonotope(zeros(0,1));     % key change
-        if ~isfield(options,'approx') || ~isfield(options.approx,'p') || options.approx.p==0
+    % Defensive re-harmonization before each call (idempotent)
+    if sys.nrOfDims == 0
+        params_id_init.R0 = zonotope(zeros(0,1));
+        if ~isfield(options,'approx') || ~isfield(options.approx,'p') || isempty(options.approx.p) || options.approx.p == 0
             options.approx.p = max(1, getfielddef(sys,'n_p',1));
         end
     else
         params_id_init.R0 = params_true.R0;
     end
-    
-    % make sure U matches the system’s input dimension
     dim_u_eff = sys.nrOfInputs;
-    cU = center(params_true.U);
-    if numel(cU) ~= dim_u_eff, cU = zeros(dim_u_eff,1); end
-    params_id_init.U = zonotope([cU(:), eye(dim_u_eff), ones(dim_u_eff,1)]);
-    % -------------------- PATCH --------------------
+    cU = center(params_true.U); if numel(cU) ~= dim_u_eff, cU = zeros(dim_u_eff,1); end
+    params_id_init.U = zonotope([cU(:), eye(dim_u_eff)]);
 
     % Preflight assert
-    assert(sys_eff.nrOfDims == dim(params_id_init.R0), 'R0/system dimension mismatch before conform().');
+    dR0 = dim(params_id_init.R0);
+    assert(sys_eff.nrOfDims == dR0, 'R0/system dimension mismatch before conform(): nrOfDims=%d, dim(R0)=%d', ...
+           sys_eff.nrOfDims, dR0);
 
+    % Run conform()
     t0 = tic;
     [configs{i+1}.params, results] = conform(sys_eff, params_id_init, options, type);
     Ts = toc(t0);
@@ -165,13 +144,14 @@ for i = 1:numel(methodsBlack)
     configs{i+1}.options = options_reach;
     configs{i+1}.name    = type;
 
-    fprintf("Identification time: %.4f\n", Ts);
+    fprintf("Identification time: %.4f s\n", Ts);
 end
 
 % ----- Validation & Visualization -----
+methodsList = ["true", methodsBlack];
+
 % 1) Identification data sanity check
 num_out = 0; num_in = 0; check_contain = 1;
-methodsList = ["true", methodsBlack];
 for m=1:length(params_true.testSuite)
     [~, eval_id] = validateReach(params_true.testSuite{m}, configs, check_contain);
     num_out = num_out + eval_id.num_out;
@@ -208,6 +188,15 @@ end
 
 % ---- tiny helpers ----
 function v = iff(cond, a, b); if cond, v=a; else, v=b; end; end
-function v = getfielddef(S,f,def); if isobject(S), has=ismethod(S,'properties'); else, has=isstruct(S); end
-    if has && (isprop(S,f) || (isstruct(S)&&isfield(S,f))), v = S.(f); else, v = def; end
+function v = getfielddef(S,f,def)
+    if isobject(S)
+        has = ismethod(S,'properties');
+    else
+        has = isstruct(S);
+    end
+    if has && (isprop(S,f) || (isstruct(S)&&isfield(S,f)))
+        v = S.(f);
+    else
+        v = def;
+    end
 end

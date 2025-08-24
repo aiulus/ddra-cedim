@@ -44,14 +44,17 @@ cfg.ddra = struct('eta_w',1,'alpha_w',0.01);
 % Gray
 cfg.gray = struct('methodsGray', ["graySeq"]);
 
+rcsi_lbl = rcsi_label_from_cfg(cfg);                
+cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);  
+
 % Sweep grid: two shapes × multiple orders
 sweep_grid = struct();
-sweep_grid.D_list        = 3;                    % fix dimension to isolate PE
+sweep_grid.D_list        = 5;                    % fix dimension to isolate PE
 sweep_grid.alpha_w_list  = cfg.ddra.alpha_w;
 sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;
 sweep_grid.n_k_list      = cfg.shared.n_k;
-PE_orders = [1 2 3 4 5];
+PE_orders = [1 2 3 4 5 6 7 8 9 10];
 sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','randn','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0), ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...

@@ -21,7 +21,7 @@ rng(1,'twister');
 
 % ---------- Minimal cfg ----------
 cfg = struct();
-cfg.io = struct('save_tag', 'kMSD_dim_sweep');
+cfg.io = struct('save_tag', 'kMSD_sample_size_sweep');
 
 % System & shared options
 cfg.shared = struct();
@@ -60,13 +60,17 @@ cfg.ddra.alpha_w = 0.01;   % W scale
 
 % Gray methods (keep simple/fast)
 cfg.gray = struct();
-cfg.gray.methodsGray = ["graySeq"];
+cfg.gray.methodsGray = ["grayLS"];
+
+rcsi_lbl = rcsi_label_from_cfg(cfg);                
+cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);  
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
-sweep_grid.D_list       = [3];
+sweep_grid.D_list       = [2];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
-sweep_grid.n_m_list = [2 4 8 16 32];
+sweep_grid.n_m_list = [2 4 8 16 32 64];
+%sweep_grid.n_m_list = [2 4];
 sweep_grid.n_s_list = 1;
 sweep_grid.n_k_list = 10;
 sweep_grid.pe_list = {struct('mode','randn')};  % keep excitation mode fixed
@@ -74,23 +78,16 @@ sweep_grid.pe_list = {struct('mode','randn')};  % keep excitation mode fixed
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
 cfg.lowmem.gray_check_contain = true;   % don’t do expensive Gray containment
-cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metrics on the fly
+cfg.lowmem.store_ddra_sets    = true;   % don’t keep DDRA sets; compute metrics on the fly
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
 % ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
+SUMMARY = ensure_time_totals(SUMMARY);
 
 % ---------- Quick plots: 4 panels (total / learn / validation / inference) ----------
-% ensure totals exist
-if ~ismember('t_ddra_total', SUMMARY.Properties.VariableNames)
-    SUMMARY.t_ddra_total = SUMMARY.t_ddra_learn + SUMMARY.t_ddra_check + SUMMARY.t_ddra_infer;
-end
-if ~ismember('t_gray_total', SUMMARY.Properties.VariableNames)
-    SUMMARY.t_gray_total = SUMMARY.t_gray_learn + SUMMARY.t_gray_val   + SUMMARY.t_gray_infer;
-end
-
-x = SUMMARY.n_m;                       
+x = coerce_numeric(SUMMARY.n_m);
 colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
 
 f = figure('Name','Runtime panels','Color','w');
@@ -99,79 +96,67 @@ tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
 % 1) TOTAL
 nexttile; hold on;
 plot(x, SUMMARY.t_ddra_total, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x, SUMMARY.t_gray_total, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray');
+plot(x, SUMMARY.t_gray_total, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl]);
 xlabel('n_m (number of input trajectories)'); ylabel('Seconds');
-title('Total runtime vs n_m'); grid on; legend('Location','best');
+title(['Total runtime vs n_m  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
 % 2) LEARNING
 nexttile; hold on;
 plot(x, SUMMARY.t_ddra_learn, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA learn');
-plot(x, SUMMARY.t_gray_learn, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray learn');
+plot(x, SUMMARY.t_gray_learn, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl ' learn']);
 xlabel('n_m'); ylabel('Seconds');
-title('Learning runtime'); grid on; legend('Location','best');
+title(['Learning runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
-% 3) VALIDATION  (DDRA “check” vs Gray validation)
+% 3) VALIDATION
 nexttile; hold on;
 plot(x, SUMMARY.t_ddra_check, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA check');
-plot(x, SUMMARY.t_gray_val,   '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray validate');
+plot(x, SUMMARY.t_gray_val,   '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl ' validate']);
 xlabel('n_m'); ylabel('Seconds');
-title('Validation / Check runtime'); grid on; legend('Location','best');
+title(['Validation / Check runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
 % 4) INFERENCE
 nexttile; hold on;
 plot(x, SUMMARY.t_ddra_infer, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA infer');
-plot(x, SUMMARY.t_gray_infer, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray infer');
+plot(x, SUMMARY.t_gray_infer, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl ' infer']);
 xlabel('n_m'); ylabel('Seconds');
-title('Inference runtime'); grid on; legend('Location','best');
+title(['Inference runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
-% save into experiments/results/plots/
-[plots_dir, ~] = init_io(cfg);  
-out_png = fullfile(plots_dir, 'runtime_panels_vs_nm.png');
-%exportgraphics(f, out_png, 'Resolution', 200);
+% Save with method in filename
+[plots_dir, ~] = init_io(cfg);
+save_plot(f, plots_dir, ['runtime_panels_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 
-save_plot(f, plots_dir, 'runtime_panels_vs_nm', 'Formats', {'png','pdf'}, 'Resolution', 200);
-
-disp(['Saved runtime panels -> ' out_png]);
-
-%% -------- Fidelity / Conservatism panels (vs n_m) --------
-% robustly coerce table vars to numeric (they can be cell/char depending on CSV path)
-toNum = @(v) (iscell(v)   * cellfun(@(x) (ischar(x)||isstring(x)) * str2double(string(x)) + ...
-                                     (~ischar(x)&&~isstring(x))   * double(x), v) + ...
-              ~iscell(v)) .* double(v); % elementwise trick to avoid ifs
-
-x_nm        = toNum(SUMMARY.n_m);
-cval_ddra   = toNum(SUMMARY.cval_ddra);
-cval_gray   = toNum(SUMMARY.cval_gray);
-sizeI_ddra  = toNum(SUMMARY.sizeI_ddra);
-sizeI_gray  = toNum(SUMMARY.sizeI_gray);
+% -------- Fidelity / Conservatism panels (vs n_m) --------
+x_nm        = coerce_numeric(SUMMARY.n_m);
+cval_ddra   = coerce_numeric(SUMMARY.cval_ddra);
+cval_gray   = coerce_numeric(SUMMARY.cval_gray);
+sizeI_ddra  = coerce_numeric(SUMMARY.sizeI_ddra);
+sizeI_gray  = coerce_numeric(SUMMARY.sizeI_gray);
 
 f2 = figure('Name','Fidelity & Conservatism','Color','w');
 tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
 
-% (1) Fidelity (containment on validation)
+% (1) Fidelity
 nexttile; hold on;
 plot(x_nm, cval_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x_nm, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray');
+plot(x_nm, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl]);
 xlabel('n_m (number of input trajectories)'); ylabel('Containment on validation (%)');
-title('Fidelity vs n_m'); grid on; legend('Location','best');
+title(['Fidelity vs n_m  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
-% (2) Conservatism proxy (aggregated interval size)
+% (2) Conservatism
 nexttile; hold on;
 plot(x_nm, sizeI_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x_nm, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray');
+plot(x_nm, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+     'DisplayName', ['RCSI-' rcsi_lbl]);
 xlabel('n_m (number of input trajectories)'); ylabel('Aggregated interval size (proxy)');
-title('Conservatism vs n_m'); grid on; legend('Location','best');
+title(['Conservatism vs n_m  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
-% save alongside other artifacts
+% Save with method in filename
 [plots_dir, ~] = init_io(cfg);
-out2_png = fullfile(plots_dir, 'fidelity_conservatism_vs_nm.png');
-out2_pdf = fullfile(plots_dir, 'fidelity_conservatism_vs_nm.pdf');
-%exportgraphics(f2, out2_png, 'Resolution', 200);
-%exportgraphics(f2, out2_pdf, 'ContentType','vector');
-
-save_plot(f2, plots_dir, 'fidelity_conservatism_vs_nm', 'Formats', {'png','pdf'}, 'Resolution', 200);
-
-
-disp(['Saved fidelity/conservatism panels -> ' out2_png]);
+save_plot(f2, plots_dir, ['fidelity_conservatism_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 close all force

@@ -72,6 +72,9 @@ cfg.ddra.alpha_w = 0.01;   % W scale
 cfg.gray = struct();
 cfg.gray.methodsGray = ["graySeq"];
 
+rcsi_lbl = rcsi_label_from_cfg(cfg);                
+cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);  
+
 % ---------- Sweep grid (vary only D) ----------
 sweep_grid = struct();
 %sweep_grid.D_list = [2 3 4 5 6];       % dimensional scalability
