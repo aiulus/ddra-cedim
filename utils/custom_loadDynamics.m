@@ -142,8 +142,8 @@ switch dynamics
         fun = @(z,u) sysd.A*z + sysd.B*u + [zeros(D,1); dt * ( M \ ( -Knl * tanh(Gamma * z(1:D)) ) )];
 
         dim_x = 2*D; dim_u = D; dim_y = 2*D;
-        out_fun = @(z,u) z;  % full state
-        sys = nonlinearSysDT('kSatMSD', fun, dt, dim_x, dim_u, out_fun, dim_y);
+        %out_fun = @(z,u) z;  % full state
+        sys = nonlinearSysDT('kSatMSD', fun, dt, dim_x, dim_u);
 
         % --- default uncertainty sets ---
         switch type
@@ -228,8 +228,8 @@ switch dynamics
             z(D+1:end) + dt * ( M \ ( -Kc*z(1:D) - Cc*z(D+1:end) - Gamma*(z(1:D).^3) + u ) ) ];
 
         dim_x = 2*D; dim_u = D; dim_y = 2*D;
-        out_fun = @(z,u) z;   % full state
-        sys = nonlinearSysDT('kDuffingMSD', fun, dt, dim_x, dim_u, out_fun, dim_y);
+        %out_fun = @(z,u) z;   % full state
+        sys = nonlinearSysDT('kDuffingMSD', fun, dt, dim_x, dim_u);
 
         % Uncertainty sets
         switch type

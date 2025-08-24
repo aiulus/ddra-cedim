@@ -24,8 +24,8 @@ cfg.io = struct('save_tag', 'kLipMSD_sample_size_sweep');
 % System & shared options
 cfg.shared = struct();
 cfg.shared.dyn   = "kLipMSD";      % <-- nonlinear Lipschitz system
-cfg.shared.type  = "standard";     % uncertainty preset (your custom_loadDynamics)
-cfg.shared.p_extr = 0.3;           % test-suite extreme input prob
+cfg.shared.type  = "standard";     % uncertainty preset 
+cfg.shared.p_extr = 0.3;           % test-suite extreme input prob.
 
 % CORA reachability options (used by validateReach / reach)
 cfg.shared.options_reach = struct( ...
@@ -52,9 +52,12 @@ cfg.shared.n_k_val = cfg.shared.n_k;
 
 % Black-box RCSI methods (you can include one or both)
 cfg.black = struct();
-cfg.black.methodsBlack = ["blackGP"];   % or ["blackGP","blackCGP"]
+cfg.black.methodsBlack = ["blackCGP"];   % or ["blackGP","blackCGP"]
 
-% (We keep explicit process noise out for apples-to-apples unless you study noise.)
+% (Optional) lighter CGP for speed
+%cfg.black.approx = struct('cgp_num_gen', 5, 'cgp_pop_size_base', 10);
+
+% Keep explicit process noise out for side-by-side comparison
 cfg.shared.noise_for_gray = false;
 
 % --- method label for filenames
