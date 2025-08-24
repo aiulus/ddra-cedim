@@ -1,0 +1,76 @@
+rng(1,'twister');
+
+cfg = struct();
+cfg.io = struct('save_tag','kMSD_pe_sweep');
+
+% Shared
+cfg.shared = struct();
+cfg.shared.dyn   = "k-Mass-SD";
+cfg.shared.type  = "standard";
+cfg.shared.p_extr = 0.3;
+cfg.shared.options_reach = struct('zonotopeOrder',100,'tensorOrder',2,'errorOrder',1,'tensorOrderOutput',2,'verbose',false);
+cfg.shared.cs_base = struct('robustnessMargin',1e-9,'verbose',false,'cost',"interval",'constraints',"half");
+
+% Data budgets
+cfg.shared.n_m = 3; 
+cfg.shared.n_s = 2;  
+cfg.shared.n_k = 2;
+cfg.shared.n_m_val = 2; 
+cfg.shared.n_s_val = cfg.shared.n_s; 
+cfg.shared.n_k_val = cfg.shared.n_k;
+
+% DDRA noise
+cfg.ddra = struct('eta_w',1,'alpha_w',0.01);
+
+% Gray
+cfg.gray = struct('methodsGray', ["graySeq"]);
+
+% Sweep grid: two shapes × multiple orders
+sweep_grid = struct();
+sweep_grid.D_list        = 3;                    % fix dimension to isolate PE
+sweep_grid.alpha_w_list  = cfg.ddra.alpha_w;
+sweep_grid.n_m_list      = cfg.shared.n_m;
+sweep_grid.n_s_list      = cfg.shared.n_s;
+sweep_grid.n_k_list      = cfg.shared.n_k;
+PE_orders = [1 2];
+sweep_grid.pe_list = [ ...
+    arrayfun(@(L) struct('mode','randn','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0), ...
+    arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
+];
+
+SUMMARY = run_sweeps(cfg, sweep_grid);
+
+% --- Plots: fidelity/conservatism vs PE order, per shape
+figure; tiledlayout(1,2); 
+isRandn = strcmp(SUMMARY.pe_mode,'randn');
+isSin   = strcmp(SUMMARY.pe_mode,'sinWave');
+
+nexttile; hold on; grid on; title('Fidelity vs PE order');
+plot(SUMMARY.pe_order(isRandn), SUMMARY.cval_ddra(isRandn), '-o','DisplayName','DDRA randn');
+plot(SUMMARY.pe_order(isRandn), SUMMARY.cval_gray(isRandn), '-s','DisplayName','Gray randn');
+plot(SUMMARY.pe_order(isSin),   SUMMARY.cval_ddra(isSin),   '-.^','DisplayName','DDRA sin');
+plot(SUMMARY.pe_order(isSin),   SUMMARY.cval_gray(isSin),   '-v','DisplayName','Gray sin');
+xlabel('PE order (L)'); ylabel('Containment on validation (%)'); legend('Location','best');
+
+nexttile; hold on; grid on; title('Conservatism proxy vs PE order');
+plot(SUMMARY.pe_order(isRandn), SUMMARY.sizeI_ddra(isRandn), '-o','DisplayName','DDRA randn');
+plot(SUMMARY.pe_order(isRandn), SUMMARY.sizeI_gray(isRandn), '-s','DisplayName','Gray randn');
+plot(SUMMARY.pe_order(isSin),   SUMMARY.sizeI_ddra(isSin),   '-.^','DisplayName','DDRA sin');
+plot(SUMMARY.pe_order(isSin),   SUMMARY.sizeI_gray(isSin),   '-v','DisplayName','Gray sin');
+xlabel('PE order (L)'); ylabel('Aggregated interval size');
+
+% --- Runtime profile vs PE order
+figure; tiledlayout(1,2);
+nexttile; hold on; grid on; title('DDRA runtime vs L');
+plot(SUMMARY.pe_order, SUMMARY.t_ddra_learn,'-o','DisplayName','learn');
+plot(SUMMARY.pe_order, SUMMARY.t_ddra_check,'-s','DisplayName','check');
+plot(SUMMARY.pe_order, SUMMARY.t_ddra_infer,'-^','DisplayName','infer');
+xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
+
+nexttile; hold on; grid on; title('Gray runtime vs L');
+plot(SUMMARY.pe_order, SUMMARY.t_gray_learn,'-o','DisplayName','learn');
+plot(SUMMARY.pe_order, SUMMARY.t_gray_val,  '-s','DisplayName','validate');
+plot(SUMMARY.pe_order, SUMMARY.t_gray_infer,'-^','DisplayName','infer');
+xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
+
+disp('PE sweep done.');

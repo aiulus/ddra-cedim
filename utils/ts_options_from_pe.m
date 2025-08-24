@@ -1,11 +1,18 @@
-function optTS = ts_options_from_pe(C, pe)
-    optTS = struct('p_extr', C.shared.p_extr);
-    if isfield(C.shared,'testSuite_mode') && C.shared.testSuite_mode=="ddra_like"
-        optTS.inputCurve = "randn";
-        optTS.contInput  = false;
-        % Do NOT set stateSet here. Caller will set it to R0 if desired.
-    end
-    if isfield(pe,'mode') && pe.mode=="multisine"
-        optTS.inputCurve = "sinWave";   % proxy for PE
-    end
+function optTS = ts_options_from_pe(C, pe, sys)
+% Build CORA testSuite options from our PE spec, mirroring DDRA's shapes
+    n_u = sys.nrOfInputs;
+    n_k = C.shared.n_k;
+    dt  = sys.dt;
+    % (n_m not directly used by createTestSuite options, but kept for symmetry)
+    % n_m = C.shared.n_m; 
+
+    [optTS, ~] = pe_param_synth(pe, n_u, n_k, dt);
+
+    % Match global knobs
+    optTS.p_extr    = getfielddef(C.shared,'p_extr', 0.3);
+    optTS.contInput = true;  % CORA default 
+end
+
+function v = getfielddef(S, f, d)
+    if isstruct(S) && isfield(S,f), v = S.(f); else, v = d; end
 end

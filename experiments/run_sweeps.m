@@ -53,6 +53,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
                     Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+
+                row.pe_hankel_rank = getfielddef(Zinfo,'hankel_rank', NaN);
+                row.pe_hankel_full = getfielddef(Zinfo,'hankel_full', false);
+                row.pe_rank_frac   = getfielddef(Zinfo,'rank_frac',   NaN);
                 
                 % Initialize schema & preallocate on first row
                 if rowi == 1

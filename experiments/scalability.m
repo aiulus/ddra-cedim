@@ -82,3 +82,45 @@ xlabel('Dimension D'); ylabel('Aggregated interval size (proxy)');
 title('Conservatism proxy vs Dimension'); grid on; legend('Location','best');
 
 disp('Done. CSV is in results/kMSD_dim_sweep_sweeps/summary.csv');
+
+%% -------- Runtime plots (vs D) --------
+% Compute totals if not already present
+if ~ismember('t_ddra_total', SUMMARY.Properties.VariableNames)
+    SUMMARY.t_ddra_total = SUMMARY.t_ddra_learn + SUMMARY.t_ddra_check + SUMMARY.t_ddra_infer;
+end
+if ~ismember('t_gray_total', SUMMARY.Properties.VariableNames)
+    SUMMARY.t_gray_total = SUMMARY.t_gray_learn + SUMMARY.t_gray_val   + SUMMARY.t_gray_infer;
+end
+
+% One consolidated figure: total + 3 phase panels
+figure; tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
+
+% (1) Total runtime
+nexttile;
+plot(SUMMARY.D, SUMMARY.t_ddra_total, '-o', 'LineWidth',1.5, 'DisplayName','DDRA total'); hold on;
+plot(SUMMARY.D, SUMMARY.t_gray_total, '-s', 'LineWidth',1.5, 'DisplayName','Gray total');
+xlabel('Dimension D'); ylabel('Seconds'); title('Total runtime'); grid on; legend('Location','best');
+
+% (2) Learning phase
+nexttile;
+plot(SUMMARY.D, SUMMARY.t_ddra_learn, '-o', 'LineWidth',1.5, 'DisplayName','DDRA learn'); hold on;
+plot(SUMMARY.D, SUMMARY.t_gray_learn, '-s', 'LineWidth',1.5, 'DisplayName','Gray learn');
+xlabel('Dimension D'); ylabel('Seconds'); title('Learning phase'); grid on; legend('Location','best');
+
+% (3) Validation phase
+nexttile;
+plot(SUMMARY.D, SUMMARY.t_ddra_check, '-o', 'LineWidth',1.5, 'DisplayName','DDRA check'); hold on;
+plot(SUMMARY.D, SUMMARY.t_gray_val,  '-s', 'LineWidth',1.5, 'DisplayName','Gray validate');
+xlabel('Dimension D'); ylabel('Seconds'); title('Validation phase'); grid on; legend('Location','best');
+
+% (4) Inference phase
+nexttile;
+plot(SUMMARY.D, SUMMARY.t_ddra_infer, '-o', 'LineWidth',1.5, 'DisplayName','DDRA infer'); hold on;
+plot(SUMMARY.D, SUMMARY.t_gray_infer, '-s', 'LineWidth',1.5, 'DisplayName','Gray infer');
+xlabel('Dimension D'); ylabel('Seconds'); title('Inference phase'); grid on; legend('Location','best');
+
+% (optional) Save alongside the CSV using the same init_io logic
+[plots_dir, results_dir] = init_io(cfg);  
+exportgraphics(gcf, fullfile(plots_dir, sprintf('%s_runtime_vs_D.png', cfg.io.save_tag)), 'Resolution', 200);
+exportgraphics(gcf, fullfile(plots_dir, sprintf('%s_runtime_vs_D.pdf', cfg.io.save_tag)), 'ContentType','vector');
+

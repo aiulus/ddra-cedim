@@ -105,3 +105,42 @@ out_png = fullfile(plots_dir, 'runtime_panels_vs_nm.png');
 exportgraphics(f, out_png, 'Resolution', 200);
 
 disp(['Saved runtime panels -> ' out_png]);
+
+%% -------- Fidelity / Conservatism panels (vs n_m) --------
+% robustly coerce table vars to numeric (they can be cell/char depending on CSV path)
+toNum = @(v) (iscell(v)   * cellfun(@(x) (ischar(x)||isstring(x)) * str2double(string(x)) + ...
+                                     (~ischar(x)&&~isstring(x))   * double(x), v) + ...
+              ~iscell(v)) .* double(v); % elementwise trick to avoid ifs
+
+x_nm        = toNum(SUMMARY.n_m);
+cval_ddra   = toNum(SUMMARY.cval_ddra);
+cval_gray   = toNum(SUMMARY.cval_gray);
+sizeI_ddra  = toNum(SUMMARY.sizeI_ddra);
+sizeI_gray  = toNum(SUMMARY.sizeI_gray);
+
+f2 = figure('Name','Fidelity & Conservatism','Color','w');
+tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
+
+% (1) Fidelity (containment on validation)
+nexttile; hold on;
+plot(x_nm, cval_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
+plot(x_nm, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray');
+xlabel('n_m (number of input trajectories)'); ylabel('Containment on validation (%)');
+title('Fidelity vs n_m'); grid on; legend('Location','best');
+
+% (2) Conservatism proxy (aggregated interval size)
+nexttile; hold on;
+plot(x_nm, sizeI_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
+plot(x_nm, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName','Gray');
+xlabel('n_m (number of input trajectories)'); ylabel('Aggregated interval size (proxy)');
+title('Conservatism vs n_m'); grid on; legend('Location','best');
+
+% save alongside other artifacts
+[plots_dir, ~] = init_io(cfg);
+out2_png = fullfile(plots_dir, 'fidelity_conservatism_vs_nm.png');
+out2_pdf = fullfile(plots_dir, 'fidelity_conservatism_vs_nm.pdf');
+exportgraphics(f2, out2_png, 'Resolution', 200);
+exportgraphics(f2, out2_pdf, 'ContentType','vector');
+
+disp(['Saved fidelity/conservatism panels -> ' out2_png]);
+

@@ -1,5 +1,5 @@
 function [ctrain, cval, Tval] = gray_containment(configs, sys_cora, R0, U, C, pe)
-    optTS = ts_options_from_pe(C, pe);
+    optTS = ts_options_from_pe(C, pe, sys_cora);
     optTS.stateSet = R0;    
 
     params_true = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k-1));
