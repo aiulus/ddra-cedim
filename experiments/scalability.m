@@ -83,6 +83,39 @@ title('Conservatism proxy vs Dimension'); grid on; legend('Location','best');
 
 disp('Done. CSV is in results/kMSD_dim_sweep_sweeps/summary.csv');
 
+% ---------- Quick plots ----------
+% Note: results saved to experiments/results/data/<tag>_sweeps/summary.csv
+[fplots_dir, ~] = init_io(cfg);   % where we'll save the figures
+
+% --- Figure 1: Fidelity / Conservatism vs D ---
+f_fid = figure('Color','w');
+tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
+
+% Containment vs D (Fidelity)
+nexttile;
+plot(SUMMARY.D, SUMMARY.cval_ddra, '-o', 'DisplayName', 'DDRA'); hold on;
+plot(SUMMARY.D, SUMMARY.cval_gray, '-s', 'DisplayName', 'GraySeq');
+xlabel('Dimension D'); ylabel('Containment on validation (%)');
+title('Fidelity vs Dimension'); grid on; legend('Location','best');
+
+% Size proxy vs D (Conservatism)
+nexttile;
+plot(SUMMARY.D, SUMMARY.sizeI_ddra, '-o', 'DisplayName', 'DDRA'); hold on;
+plot(SUMMARY.D, SUMMARY.sizeI_gray, '-s', 'DisplayName', 'GraySeq');
+xlabel('Dimension D'); ylabel('Aggregated interval size (proxy)');
+title('Conservatism proxy vs Dimension'); grid on; legend('Location','best');
+
+% Save Figure 1
+fname1 = sprintf('%s_fidcons_vs_D', cfg.io.save_tag);
+if exist('save_plot','file')
+    save_plot(f_fid, fplots_dir, fname1, 'Formats', {'png','pdf'}, 'Resolution', 200);
+else
+    exportgraphics(f_fid, fullfile(fplots_dir, [fname1 '.png']), 'Resolution', 200);
+    exportgraphics(f_fid, fullfile(fplots_dir, [fname1 '.pdf']), 'ContentType','vector');
+end
+
+disp(['Done. CSV is in ', fullfile(fplots_dir, '..', 'data', [cfg.io.save_tag '_sweeps']), filesep, 'summary.csv']);
+
 %% -------- Runtime plots (vs D) --------
 % Compute totals if not already present
 if ~ismember('t_ddra_total', SUMMARY.Properties.VariableNames)
@@ -93,7 +126,8 @@ if ~ismember('t_gray_total', SUMMARY.Properties.VariableNames)
 end
 
 % One consolidated figure: total + 3 phase panels
-figure; tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
+f_run = figure('Color','w');
+tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
 
 % (1) Total runtime
 nexttile;
@@ -119,9 +153,13 @@ plot(SUMMARY.D, SUMMARY.t_ddra_infer, '-o', 'LineWidth',1.5, 'DisplayName','DDRA
 plot(SUMMARY.D, SUMMARY.t_gray_infer, '-s', 'LineWidth',1.5, 'DisplayName','Gray infer');
 xlabel('Dimension D'); ylabel('Seconds'); title('Inference phase'); grid on; legend('Location','best');
 
-% (optional) Save alongside the CSV using the same init_io logic
-[plots_dir, results_dir] = init_io(cfg);  
-exportgraphics(gcf, fullfile(plots_dir, sprintf('%s_runtime_vs_D.png', cfg.io.save_tag)), 'Resolution', 200);
-exportgraphics(gcf, fullfile(plots_dir, sprintf('%s_runtime_vs_D.pdf', cfg.io.save_tag)), 'ContentType','vector');
+% Save Figure 2
+fname2 = sprintf('%s_runtime_vs_D', cfg.io.save_tag);
+if exist('save_plot','file')
+    save_plot(f_run, fplots_dir, fname2, 'Formats', {'png','pdf'}, 'Resolution', 200);
+else
+    exportgraphics(f_run, fullfile(fplots_dir, [fname2 '.png']), 'Resolution', 200);
+    exportgraphics(f_run, fullfile(fplots_dir, [fname2 '.pdf']), 'ContentType','vector');
+end
 
 close all force

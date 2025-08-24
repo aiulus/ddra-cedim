@@ -102,7 +102,9 @@ title('Inference runtime'); grid on; legend('Location','best');
 % save into experiments/results/plots/
 [plots_dir, ~] = init_io(cfg);  
 out_png = fullfile(plots_dir, 'runtime_panels_vs_nm.png');
-exportgraphics(f, out_png, 'Resolution', 200);
+%exportgraphics(f, out_png, 'Resolution', 200);
+
+save_plot(f, plots_dir, 'runtime_panels_vs_nm', 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 disp(['Saved runtime panels -> ' out_png]);
 
@@ -139,8 +141,11 @@ title('Conservatism vs n_m'); grid on; legend('Location','best');
 [plots_dir, ~] = init_io(cfg);
 out2_png = fullfile(plots_dir, 'fidelity_conservatism_vs_nm.png');
 out2_pdf = fullfile(plots_dir, 'fidelity_conservatism_vs_nm.pdf');
-exportgraphics(f2, out2_png, 'Resolution', 200);
-exportgraphics(f2, out2_pdf, 'ContentType','vector');
+%exportgraphics(f2, out2_png, 'Resolution', 200);
+%exportgraphics(f2, out2_pdf, 'ContentType','vector');
+
+save_plot(f2, plots_dir, 'fidelity_conservatism_vs_nm', 'Formats', {'png','pdf'}, 'Resolution', 200);
+
 
 disp(['Saved fidelity/conservatism panels -> ' out2_png]);
 

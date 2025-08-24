@@ -38,7 +38,6 @@ sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
 ];
 
-
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
 cfg.lowmem.gray_check_contain = false;   % don’t do expensive Gray containment
@@ -46,11 +45,13 @@ cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metri
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
+% === NEW: get plots_dir once ===
+[plots_dir, ~] = init_io(cfg);
 
 SUMMARY = run_sweeps(cfg, sweep_grid);
 
 % --- Plots: fidelity/conservatism vs PE order, per shape
-figure; tiledlayout(1,2); 
+f1 = figure; tiledlayout(1,2); 
 isRandn = strcmp(SUMMARY.pe_mode,'randn');
 isSin   = strcmp(SUMMARY.pe_mode,'sinWave');
 
@@ -68,19 +69,26 @@ plot(SUMMARY.pe_order(isSin),   SUMMARY.sizeI_ddra(isSin),   '-.^','DisplayName'
 plot(SUMMARY.pe_order(isSin),   SUMMARY.sizeI_gray(isSin),   '-v','DisplayName','Gray sin');
 xlabel('PE order (L)'); ylabel('Aggregated interval size');
 
-% --- Runtime profile vs PE order
-figure; tiledlayout(1,2);
-nexttile; hold on; grid on; title('DDRA runtime vs L');
-plot(SUMMARY.pe_order, SUMMARY.t_ddra_learn,'-o','DisplayName','learn');
-plot(SUMMARY.pe_order, SUMMARY.t_ddra_check,'-s','DisplayName','check');
-plot(SUMMARY.pe_order, SUMMARY.t_ddra_infer,'-^','DisplayName','infer');
-xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
+% === NEW: save the first figure ===
+save_plot(f1, plots_dir, 'pe_fidelity_conservatism', 'Formats', {'png','pdf'}, 'Resolution', 200);
 
-nexttile; hold on; grid on; title('Gray runtime vs L');
-plot(SUMMARY.pe_order, SUMMARY.t_gray_learn,'-o','DisplayName','learn');
-plot(SUMMARY.pe_order, SUMMARY.t_gray_val,  '-s','DisplayName','validate');
-plot(SUMMARY.pe_order, SUMMARY.t_gray_infer,'-^','DisplayName','infer');
-xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
+%% TODO: This bit is irrelevant for the analysis / remove
+% --- Runtime profile vs PE order
+%f2 = figure; tiledlayout(1,2);
+%nexttile; hold on; grid on; title('DDRA runtime vs L');
+%plot(SUMMARY.pe_order, SUMMARY.t_ddra_learn,'-o','DisplayName','learn');
+%plot(SUMMARY.pe_order, SUMMARY.t_ddra_check,'-s','DisplayName','check');
+%plot(SUMMARY.pe_order, SUMMARY.t_ddra_infer,'-^','DisplayName','infer');
+%xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
+
+%nexttile; hold on; grid on; title('Gray runtime vs L');
+%plot(SUMMARY.pe_order, SUMMARY.t_gray_learn,'-o','DisplayName','learn');
+%plot(SUMMARY.pe_order, SUMMARY.t_gray_val,  '-s','DisplayName','validate');
+%plot(SUMMARY.pe_order, SUMMARY.t_gray_infer,'-^','DisplayName','infer');
+%xlabel('PE order (L)'); ylabel('s'); legend('Location','best');
+
+% === NEW: save the second figure ===
+%save_plot(f2, plots_dir, 'pe_runtime_profiles', 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 disp('PE sweep done.');
 
