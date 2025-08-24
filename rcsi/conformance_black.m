@@ -134,6 +134,23 @@ for i = 1:numel(methodsBlack)
     dR0 = dim(params_id_init.R0);
     assert(sys_eff.nrOfDims == dR0, 'R0/system dimension mismatch before conform(): nrOfDims=%d, dim(R0)=%d', ...
            sys_eff.nrOfDims, dR0);
+    
+    nx_eff = effective_state_dim(sys, options);  % <-- helper below
+    nu     = sys.nrOfInputs;
+    
+    % R0: center at 0 in the correct dimension if missing/mismatched
+    if ~isfield(params_id_init,'R0') || isempty(params_id_init.R0) ...
+       || size(center(params_id_init.R0),1) ~= nx_eff
+        params_id_init.R0 = zonotope(zeros(nx_eff,1));
+    end
+    
+    % U: ensure correct input dimension; keep center if available
+    cU = zeros(nu,1);
+    if isfield(params_id_init,'U') && ~isempty(params_id_init.U)
+        cU0 = center(params_id_init.U);
+        if numel(cU0) == nu, cU = cU0(:); end
+    end
+    params_id_init.U = zonotope([cU, eye(nu), ones(nu,1)]);
 
     % Run conform()
     t0 = tic;

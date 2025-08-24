@@ -51,6 +51,308 @@ if nargin == 1
 end
 
 switch dynamics
+    case {"kLipMSD","k-Lip-MSD"}
+        % Mass–Spring–Damper chain with onsite saturating (tanh) springs.
+        % Nonlinear globally Lipschitz; scalable in D with tridiagonal coupling.
+        %
+        % Continuous-time model (about the linear equilibrium xbar):
+        %   qdot = v
+        %   M vdot = -Kc q - Cc v - Knl * tanh(Gamma * q) + u
+        %
+        % Here Kc is the usual chain stiffness (fixed ends), Cc ground damping.
+        % The onsite term Knl*tanh(Gamma*q) is odd, saturating, and has bounded slope:
+        %   d/dq [Knl*tanh(Gamma*q)] = Knl * diag( Gamma .* sech^2(Gamma.*q) )  ⪯  Knl*Gamma.
+        % Hence the vector field is globally Lipschitz (linear part + bounded-slope nonlinearity).
+        %
+        % p: scalar D or struct with fields:
+        %   p.k     : number of masses D (default 3)
+        %   p.m     : masses [scalar or D-vector] (default 1)
+        %   p.k_s   : linear springs k_0..k_D [scalar or (D+1)-vector] (default 1)
+        %   p.c_d   : ground damping b_1..b_D [scalar or D-vector] (default 0.1)
+        %   p.l     : natural lengths l_0..l_D [scalar or (D+1)-vector] (default 0)
+        %   p.L     : right-wall position X_{D+1}=L (default 0)
+        %   p.k_nl  : onsite sat-spring gains (diag entries of Knl) [scalar or D-vector] (default 0.5)
+        %   p.gamma : sat slopes (diag entries of Gamma)             [scalar or D-vector] (default 1.0)
+        %   p.dt    : sampling time (default 0.01)
+        %
+        % States: z = [q; v] in R^{2D}, with q = x - xbar (deflection about equilibrium)
+        % Inputs: u in R^{D} (one force per mass)
+        % Output: full state [q; v]
+
+        if nargin < 3 || isempty(p), p = 3; end
+        if isnumeric(p)
+            D = round(p);
+            p = struct('k',D,'m',1,'k_s',1,'c_d',0.1,'l',0,'L',0,...
+                       'k_nl',0.5,'gamma',1.0,'dt',0.01);
+        elseif isstruct(p)
+            if ~isfield(p,'k'),     p.k = 3;      end
+            if ~isfield(p,'m'),     p.m = 1;      end
+            if ~isfield(p,'k_s'),   p.k_s = 1;    end
+            if ~isfield(p,'c_d'),   p.c_d = 0.1;  end
+            if ~isfield(p,'l'),     p.l = 0;      end
+            if ~isfield(p,'L'),     p.L = 0;      end
+            if ~isfield(p,'k_nl'),  p.k_nl = 0.5; end
+            if ~isfield(p,'gamma'), p.gamma = 1.0;end
+            if ~isfield(p,'dt'),    p.dt = 0.01;  end
+        else
+            error('Parameter p must be a scalar (k) or a struct.');
+        end
+
+        D   = p.k;   dt = p.dt;
+
+        % --- broadcast scalars to vectors ---
+        m   = p.m;    if isscalar(m),    m    = m   * ones(D,1);    else, m = m(:);    end
+        cds = p.c_d;  if isscalar(cds),  cds  = cds * ones(D,1);    else, cds = cds(:);end
+        ks  = p.k_s;  if isscalar(ks),   ks   = ks  * ones(D+1,1);  else, ks = ks(:);  end
+        l   = p.l;    if isscalar(l),    l    = l   * ones(D+1,1);  else, l = l(:);    end
+        Lw  = p.L;
+        knl = p.k_nl; if isscalar(knl),  knl  = knl * ones(D,1);    else, knl = knl(:);end
+        gam = p.gamma;if isscalar(gam),  gam  = gam * ones(D,1);    else, gam = gam(:);end
+
+        % --- linear chain stiffness (fixed ends) ---
+        main = ks(1:D) + ks(2:D+1);
+        off  = -ks(2:D);
+        Kc   = diag(main) + diag(off,1) + diag(off,-1);
+
+        Cc = diag(cds);
+        M  = diag(m);
+
+        % --- preload from natural lengths and right wall; equilibrium shift q = x - xbar ---
+        s = zeros(D,1);
+        s(1) = ks(1)*l(1) - ks(2)*l(2);
+        if D >= 3
+            idx = 2:(D-1);
+            s(idx) = ks(idx).*l(idx) - ks(idx+1).*l(idx+1);
+        end
+        s(D) = ks(D)*l(D) - ks(D+1)*l(D+1) - ks(D+1)*Lw;
+        xbar = Kc \ s;
+
+        % --- linear part (ZOH discretized) ---
+        ZD = zeros(D); ID = eye(D);
+        A_c = [ZD, ID; -(M\Kc), -(M\Cc)];
+        B_c = [ZD;    M\ID];
+        sysc = ss(A_c, B_c, eye(2*D), zeros(2*D,D));
+        sysd = c2d(sysc, dt);
+
+        % --- nonlinear onsite saturation term ---
+        Knl   = diag(knl);
+        Gamma = diag(gam);
+
+        % one-step map: linear ZOH + explicit increment for tanh term
+        fun = @(z,u) sysd.A*z + sysd.B*u + [zeros(D,1); dt * ( M \ ( -Knl * tanh(Gamma * z(1:D)) ) )];
+
+        dim_x = 2*D; dim_u = D; dim_y = 2*D;
+        out_fun = @(z,u) z;  % full state
+        sys = nonlinearSysDT('kSatMSD', fun, dt, dim_x, dim_u, out_fun, dim_y);
+
+        % --- default uncertainty sets ---
+        switch type
+            case "standard"
+                R0 = zonotope([zeros(dim_x,1), 0.1*eye(dim_x)]);
+                U  = zonotope([zeros(dim_u,1), 0.2*eye(dim_u)]);
+            case "diag"
+                R0 = zonotope([0.05*randn(dim_x,1), 0.05*eye(dim_x)]);
+                U  = zonotope([0.05*randn(dim_u,1), 0.1*eye(dim_u)]);
+            case "rand"
+                R0 = zonotope([0.1*randn(dim_x,1), 0.05*randn(dim_x, max(2, ceil(dim_x/6)))]);
+                U  = zonotope([0.1*randn(dim_u,1), 0.05*randn(dim_u, max(2, ceil(dim_u/3)))]);
+        end
+
+        p_true = struct('m',m,'k_s',ks,'c_d',cds,'l',l,'L',Lw,...
+                        'k_nl',knl,'gamma',gam,'xbar',xbar,'dt',dt);
+
+    case {"kDuffingMSD", "k- Duffing-MSD"}
+        % MSD chain with onsite cubic springs: locally Lipschitz polynomial.
+        % States z=[q;v] in R^{2D}, q = x - xbar. Inputs u: one force per mass.
+        %
+        % p: scalar D or struct:
+        %   p.k     : #masses D (default 3)
+        %   p.m     : masses [scalar or D-vector] (default 1)
+        %   p.k_s   : linear springs k_0..k_D [scalar or (D+1)-vector] (default 1)
+        %   p.c_d   : ground damping b_1..b_D [scalar or D-vector] (default 0.1)
+        %   p.l     : natural lengths l_0..l_D (default 0)
+        %   p.L     : right-wall position (default 0)
+        %   p.gamma : onsite cubic coeffs γ_i >=0 [scalar or D-vector] (default 0.2)
+        %   p.dt    : sampling time (default 0.01)
+
+        if nargin < 3 || isempty(p), p = 3; end
+        if isnumeric(p)
+            D = round(p);
+            p = struct('k',D,'m',1,'k_s',1,'c_d',0.1,'l',0,'L',0,'gamma',0.2,'dt',0.01);
+        elseif isstruct(p)
+            if ~isfield(p,'k'),     p.k = 3;     end
+            if ~isfield(p,'m'),     p.m = 1;     end
+            if ~isfield(p,'k_s'),   p.k_s = 1;   end
+            if ~isfield(p,'c_d'),   p.c_d = 0.1; end
+            if ~isfield(p,'l'),     p.l = 0;     end
+            if ~isfield(p,'L'),     p.L = 0;     end
+            if ~isfield(p,'gamma'), p.gamma = 0.2; end
+            if ~isfield(p,'dt'),    p.dt = 0.01; end
+        else
+            error('Parameter p must be a scalar (k) or a struct.');
+        end
+
+        D  = p.k;          dt = p.dt;
+
+        % Broadcast scalars to vectors
+        m   = p.m;    if isscalar(m),    m    = m   * ones(D,1);   else, m = m(:);    end
+        cds = p.c_d;  if isscalar(cds),  cds  = cds * ones(D,1);   else, cds = cds(:);end
+        ks  = p.k_s;  if isscalar(ks),   ks   = ks  * ones(D+1,1); else, ks = ks(:);  end
+        l   = p.l;    if isscalar(l),    l    = l   * ones(D+1,1); else, l = l(:);    end
+        Lw  = p.L;
+        gam = p.gamma; if isscalar(gam), gam  = gam * ones(D,1);   else, gam = gam(:);end
+
+        % Linear chain stiffness (as in kMSD)
+        main = ks(1:D) + ks(2:D+1);
+        off  = -ks(2:D);
+        Kc   = diag(main) + diag(off,1) + diag(off,-1);
+
+        Cc = diag(cds);
+        M  = diag(m);
+
+        % Affine preload -> equilibrium shift
+        s = zeros(D,1);
+        s(1) = ks(1)*l(1) - ks(2)*l(2);
+        if D >= 3
+            idx = 2:(D-1);
+            s(idx) = ks(idx).*l(idx) - ks(idx+1).*l(idx+1);
+        end
+        s(D) = ks(D)*l(D) - ks(D+1)*l(D+1) - ks(D+1)*Lw;
+        xbar = Kc \ s;
+
+        % Nonlinear Euler step
+        % z = [q; v];  qdot = v;  vdot = M^{-1}(-Kc q - Cc v - Gamma q.^3 + u)
+        Gamma = diag(gam);
+        fun = @(z,u) [ ...
+            z(1:D) + dt * z(D+1:end) ; ...
+            z(D+1:end) + dt * ( M \ ( -Kc*z(1:D) - Cc*z(D+1:end) - Gamma*(z(1:D).^3) + u ) ) ];
+
+        dim_x = 2*D; dim_u = D; dim_y = 2*D;
+        out_fun = @(z,u) z;   % full state
+        sys = nonlinearSysDT('kDuffingMSD', fun, dt, dim_x, dim_u, out_fun, dim_y);
+
+        % Uncertainty sets
+        switch type
+            case "standard"
+                R0 = zonotope([zeros(dim_x,1), 0.1*eye(dim_x)]);
+                U  = zonotope([zeros(dim_u,1), 0.2*eye(dim_u)]);
+            case "diag"
+                R0 = zonotope([0.05*randn(dim_x,1), 0.05*eye(dim_x)]);
+                U  = zonotope([0.05*randn(dim_u,1), 0.1*eye(dim_u)]);
+            case "rand"
+                R0 = zonotope([0.1*randn(dim_x,1), 0.05*randn(dim_x, max(2, ceil(dim_x/6)))]);
+                U  = zonotope([0.1*randn(dim_u,1), 0.05*randn(dim_u, max(2, ceil(dim_u/3)))]);
+        end
+
+        p_true = struct('m',m,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'gamma',gam,'xbar',xbar,'dt',dt);
+
+    % ===== NEW: globally Lipschitz 2D system (state-space) =====
+    case "lipschitz2D"
+        % x+ = x + dt*(A*x + g(x) + B*u) ,  g(x) = [tanh(k1*x1); tanh(k2*x2)]
+        % globally Lipschitz since |tanh'| <= 1
+        if nargin < 3 || ~isstruct(p), p = struct(); end
+        dt = getfieldwithdef(p,'dt',0.05);
+        k1 = getfielddef(p,'k1',0.8);
+        k2 = getfieldwithdef(p,'k2',0.6);
+        A  = getfieldwithdef(p,'A', [ -0.6  0.2; -0.1 -0.5 ]);
+        B  = getfieldwithdef(p,'B', eye(2));
+
+        dim_x = 2; dim_u = 2; dim_y = 2;
+        fun = @(x,u) x + dt*(A*x + [tanh(k1*x(1)); tanh(k2*x(2))] + B*u);
+        sys = nonlinearSysDT('lipschitz2D', fun, dt, dim_x, dim_u);
+
+        % sets
+        switch type
+            case "rand"
+                R0 = zonotope([ [0;0], 0.2*eye(dim_x) ]);
+                U  = zonotope([ [0;0], 0.2*eye(dim_u) ]);
+            case "diag"
+                R0 = zonotope([ [0.1; -0.1], 0.1*eye(dim_x) ]);
+                U  = zonotope([ [0.0;  0.0], 0.15*eye(dim_u) ]);
+            otherwise % "standard"
+                R0 = zonotope([ [0;0], 0.1*eye(dim_x) ]);
+                U  = zonotope([ [0;0], 0.1*eye(dim_u) ]);
+        end
+        p_true = struct('dt',dt,'k1',k1,'k2',k2,'A',A,'B',B);
+
+    % ===== NEW: globally Lipschitz 2D system (NARX) for black-box RCSI =====
+    case "lipschitz2D_ARX"
+        % y+ = A*y + [tanh(k1*y1); tanh(k2*y2)] + B*u   (p = 1)
+        if nargin < 3 || ~isstruct(p), p = struct(); end
+        dt = getfieldwithdef(p,'dt',0.05);
+        k1 = getfieldwithdef(p,'k1',0.8);
+        k2 = getfieldwithdef(p,'k2',0.6);
+        A  = getfieldwithdef(p,'A', [ -0.6  0.2; -0.1 -0.5 ]);
+        B  = getfieldwithdef(p,'B', eye(2));
+        dim_y = 2; dim_u = 2; p_dim = 1;
+        f = @(y,u) A*y(1:dim_y,1) + [tanh(k1*y(1,1)); tanh(k2*y(2,1))] + B*u(1:dim_u,1);
+        sys = nonlinearARX('lipschitz2D_ARX', f, dt, dim_y, dim_u, p_dim);
+
+        switch type
+            case "rand"
+                R0 = zonotope(zeros(dim_y*p_dim,1));                % ARX “state” is history
+                U  = zonotope([ [0;0], 0.2*eye(dim_u) ]);
+            case "diag"
+                R0 = zonotope(zeros(dim_y*p_dim,1));
+                U  = zonotope([ [0;0], 0.15*eye(dim_u) ]);
+            otherwise
+                R0 = zonotope(zeros(dim_y*p_dim,1));
+                U  = zonotope([ [0;0], 0.1*eye(dim_u) ]);
+        end
+        p_true = struct('dt',dt,'k1',k1,'k2',k2,'A',A,'B',B);
+
+    % ===== NEW: polynomial 2D system (state-space) =====
+    case "poly2D"
+        % x+ = x + dt*(A*x + [alpha*x1^2; beta*x1*x2] + B*u)
+        if nargin < 3 || ~isstruct(p), p = struct(); end
+        dt    = getfieldwithdef(p,'dt',0.05);
+        alpha = getfieldwithdef(p,'alpha', 0.2);
+        beta  = getfieldwithdef(p,'beta', -0.15);
+        A     = getfieldwithdef(p,'A', [ -0.4  0.1; -0.2 -0.3 ]);
+        B     = getfieldwithdef(p,'B', eye(2));
+        dim_x = 2; dim_u = 2; dim_y = 2;
+        fun = @(x,u) x + dt*( A*x + [alpha*x(1)^2; beta*x(1)*x(2)] + B*u );
+        sys = nonlinearSysDT('poly2D', fun, dt, dim_x, dim_u);
+
+        switch type
+            case "rand"
+                R0 = zonotope([ [0;0], 0.15*eye(dim_x) ]);
+                U  = zonotope([ [0;0], 0.2*eye(dim_u) ]);
+            case "diag"
+                R0 = zonotope([ [0.1;-0.1], 0.1*eye(dim_x) ]);
+                U  = zonotope([ [0;0], 0.15*eye(dim_u) ]);
+            otherwise
+                R0 = zonotope([ [0;0], 0.1*eye(dim_x) ]);
+                U  = zonotope([ [0;0], 0.1*eye(dim_u) ]);
+        end
+        p_true = struct('dt',dt,'alpha',alpha,'beta',beta,'A',A,'B',B);
+
+    % ===== NEW: polynomial 2D system (NARX) for black-box RCSI =====
+    case "poly2D_ARX"
+        % y+ = A*y + [alpha*y1^2; beta*y1*y2] + B*u   (p = 1)
+        if nargin < 3 || ~isstruct(p), p = struct(); end
+        dt    = getfieldwithdef(p,'dt',0.05);
+        alpha = getfieldwithdef(p,'alpha', 0.2);
+        beta  = getfieldwithdef(p,'beta', -0.15);
+        A     = getfieldwithdef(p,'A', [ -0.4  0.1; -0.2 -0.3 ]);
+        B     = getfieldwithdef(p,'B', eye(2));
+        dim_y = 2; dim_u = 2; p_dim = 1;
+        f = @(y,u) A*y(1:dim_y,1) + [alpha*y(1,1)^2; beta*y(1,1)*y(2,1)] + B*u(1:dim_u,1);
+        sys = nonlinearARX('poly2D_ARX', f, dt, dim_y, dim_u, p_dim);
+
+        switch type
+            case "rand"
+                R0 = zonotope(zeros(dim_y*p_dim,1));
+                U  = zonotope([ [0;0], 0.2*eye(dim_u) ]);
+            case "diag"
+                R0 = zonotope(zeros(dim_y*p_dim,1));
+                U  = zonotope([ [0;0], 0.15*eye(dim_u) ]);
+            otherwise
+                R0 = zonotope(zeros(dim_y*p_dim,1));
+                U  = zonotope([ [0;0], 0.1*eye(dim_u) ]);
+        end
+        p_true = struct('dt',dt,'alpha',alpha,'beta',beta,'A',A,'B',B);
+
     case {"k-Mass-SD", "kMSD"}
         % Mass–Spring–Damper chain with D masses and fixed ends
         % Model matches the definition: ground damping b_i, natural lengths l_i,

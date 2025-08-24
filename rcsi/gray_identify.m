@@ -7,10 +7,15 @@ function configs = gray_identify(sys_cora, R0, U, C, pe)
     % Build testSuite options
     optTS = ts_options_from_pe(C, pe, sys_cora);   
     optTS.stateSet = R0;
+
+    % NEW: forward containment toggle
+    LM = getfielddef(C,'lowmem', struct());
+    ccflag = getfielddef(LM, 'gray_check_contain', true);
     
     conf_opts = struct('options_reach', C.shared.options_reach, ...
                        'cs', C.shared.cs_base, ...
-                       'testS', optTS);
+                       'testS', optTS, ...
+                        'check_contain', ccflag);   % <--- new
     
     % run conformance as before
     R_tmp = conformance_gray(lookup, conf_opts); 

@@ -22,7 +22,8 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     n_u = size(sys.B,2);
 
     % Process noise W (unchanged)
-    W = zonotope(zeros(dim_x,1), C.ddra.alpha_w*ones(dim_x, C.ddra.eta_w));
+    eta_w = getfielddef(C.ddra,'eta_w',1);
+    W = zonotope(zeros(dim_x,1), C.ddra.alpha_w * ones(dim_x, eta_w));
 
     % ------------------ PE nominal inputs ------------------
     % Defaults (preserve old behavior if pe not provided)
@@ -39,41 +40,55 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     U_nom_all = cell(1, n_m);
     for m = 1:n_m
         if det, rng(1000+m,'twister'); end
+        % --- Build a Leff-rank temporal basis and map to input space ---
+        Leff_time = max(1, min(L, n_k-1));
+        Leff      = Leff_time;
+        
+        % Temporal basis S (Leff x n_k)
         switch mode
-            case 'randn'
-                % One active random segment long enough to help PE of order L
-                delay = 0;
-                tZero = min(n_k, max(ceil(0.3*n_k), ceil(0.5*n_k + L)));
-                U_nom = zeros(n_u, n_k);
-                idx1 = max(1, delay+1);
-                idx2 = min(n_k, tZero);
-                if idx2 >= idx1
-                    U_nom(:, idx1:idx2) = Aamp * randn(n_u, idx2-idx1+1);
-                end
-                % Match CORA default contInput = true
-                U_nom = cumsum(U_nom, 2);
-
             case 'sinwave'
-                % Period (in samples) ~ n_k / max(1,L/2); ensure >=8 for shape
-                T = max(8, round(n_k / max(1, L/2)));
-                Ts = 0; delay = 0;
                 t = 0:(n_k-1);
-                U_nom = Aamp * cos((2*pi/T) * (t - delay));
-                U_nom = repmat(U_nom, n_u, 1); % same phase per channel for now
-                % Match CORA default contInput = true
-                U_nom = cumsum(U_nom, 2);
-
-            otherwise
-                % Fallback: pure random-in-U 
-                U_nom = zeros(n_u, n_k);
+                f = linspace(0.08, 0.45, Leff);      % spread frequencies
+                phi = 2*pi*rand(1,Leff);
+                S = zeros(Leff, n_k);
+                for l = 1:Leff
+                    S(l,:) = sin(2*pi*f(l)*t + phi(l));
+                end
+            otherwise  % 'randn'
+                S = randn(Leff, n_k);                
         end
+        
+        % Map temporal bases to input space with Leff directions
+        if isa(U,'zonotope') && ~isempty(U.generators)
+            % use first Leff generator directions; fall back to random if fewer
+            GU = U.generators;                       % dim_u x eta_u
+            if size(GU,2) >= Leff
+                V = GU(:,1:Leff);
+            else
+                V = [GU, randn(size(GU,1), Leff-size(GU,2))];
+            end
+        else
+            % no explicit input generators: synthesize orthonormal-ish directions
+            V = randn(n_u, Leff); V = V ./ max(1e-12, vecnorm(V));
+        end
+        
+        if isa(U,'zonotope'), cU = center(U); else, cU = zeros(n_u,1); end
+        U_nom = cU + Aamp * (V * S);
+        
+        % Optional: match CORA’s “continuous input” feel
+        U_nom = cumsum(U_nom, 2);
+
         U_nom_all{m} = U_nom;
     end
 
     % ------------------ assemble blocks ------------------
     % For each (m,s), perturb nominal with a sample from U (like createTestSuite)
-    n_blocks = n_m * n_s;
-    Xminus = []; Uminus = []; Xplus = [];
+    %n_blocks = n_m * n_s;
+    %Xminus = []; Uminus = []; Xplus = [];
+    N = n_m * n_s * n_k;
+    Xminus = zeros(dim_x, N);
+    Uminus = zeros(n_u,  N);
+    Xplus  = zeros(dim_x, N);
 
     for m = 1:n_m
         for s = 1:n_s
@@ -98,16 +113,17 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     end
 
     % ------------------ rank/conditioning + PE diagnostics ------------------
+    % --- PE diagnostics on the FIRST block only (clearer than on concatenation)
+    U1 = U_nom_all{1};                % dim_u x n_k (or use the perturbed one if you prefer)
+    [hrank, hfull, rfrac] = hankel_stats(U1, n_u, L);
+
     Z = [Xminus; Uminus];
     Zinfo.rankZ = rank(Z);
     Zinfo.condZ = cond(Z*Z');
 
-    % PE stats based on block-Hankel of the whole U sequence
-    [h_rank, h_full, rank_frac] = hankel_stats(Uminus, n_u, L);
-    Zinfo.hankel_rank = h_rank;
-    Zinfo.hankel_full = h_full;
-    Zinfo.rank_frac   = rank_frac; % r / min(size(H))
-
+    Zinfo.hankel_rank = hrank;
+    Zinfo.hankel_full = hfull;
+    Zinfo.rank_frac   = rfrac;
 end
 
 % =================== helpers ===================

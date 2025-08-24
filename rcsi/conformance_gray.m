@@ -122,7 +122,7 @@ function R = conformance_gray(lookup, conf_opts)
     % ---- Validation & Visualization ----
     % Identification containment sanity-check on training data
     num_out = 0; 
-    check_contain = 1; % Takes forever if set to 1
+    check_contain = getfieldwithdefault(conf_opts, 'check_contain', true); % Takes forever if set to 1
     methodsList = ["true", methodsGray];
     for m=1:length(params_true.testSuite)
         [~, eval_id] = validateReach(params_true.testSuite{m}, configs, check_contain);
@@ -143,7 +143,7 @@ function R = conformance_gray(lookup, conf_opts)
     plot_settings.dims    = [1 2];
     plot_settings.name    = sprintf("Gray-Box Conformance: %s", dyn);
     
-    num_out = 0; check_contain = 1; %% Takes forever
+    num_out = 0; check_contain = getfieldwithdefault(conf_opts, 'check_contain', true); %% Takes forever
     for m=1:length(testSuite_val)
         [R, eval_val] = validateReach(testSuite_val{m}, configs, check_contain, plot_settings);
         num_out = num_out + eval_val.num_out;
