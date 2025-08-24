@@ -1,3 +1,27 @@
+%% HOW TO USE (State-Dimension Scalability)
+% What it does:
+%   Sweeps system state dimension D on a k-MSD chain and compares DDRA vs. Gray.
+%   Outputs: CSV (metrics per run) + plots for Fidelity/Conservatism and Runtime panels.
+%
+% Key knobs (edit below in the cfg/sweep_grid blocks):
+%   - cfg.shared.dyn / .type : system family and CORA uncertainty preset
+%   - D_list                 : dimensions to test (sweep_grid.D_list)
+%   - Data budget            : cfg.shared.n_m, n_s, n_k (+ *_val for validation)
+%   - Input excitation       : sweep_grid.pe_list (use struct('mode','randn') for default)
+%
+% Memory-efficiency toggles (safe to leave on for big sweeps):
+%   cfg.lowmem.gray_check_contain = false; % skip expensive Gray point-wise contain checks
+%   cfg.lowmem.store_ddra_sets    = false; % stream DDRA metrics; don’t keep all sets in RAM
+%   cfg.lowmem.append_csv         = true;  % stream summary.csv row-by-row to disk
+%   cfg.lowmem.zonotopeOrder_cap  = 50;    % optional: cap order in streaming to reduce memory
+%
+% Outputs:
+%   - CSV: experiments/results/data/<save_tag>_sweeps/summary.csv
+%   - Plots: experiments/results/plots/<save_tag>_sweeps/*.png|pdf
+%
+% Tip:
+%   Set cfg.io.save_tag to name your experiment folder(s).
+
 rng(1,'twister');
 
 % ---------- Minimal cfg ----------

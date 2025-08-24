@@ -1,3 +1,22 @@
+%% HOW TO USE (Sample-Size Sweep)
+% What it does:
+%   Varies the number of unique input trajectories n_m (and can vary n_s, n_k)
+%   at fixed dimension, producing (i) runtime panels and (ii) fidelity/conservatism plots.
+%
+% Key knobs:
+%   - sweep_grid.n_m_list (e.g., [2 4 8 16 32])
+%   - Fix dimension via sweep_grid.D_list = <D>;
+%   - Keep excitation fixed: sweep_grid.pe_list = {struct('mode','randn')};
+%
+% Memory-efficiency toggles:
+%   cfg.lowmem.gray_check_contain = false;
+%   cfg.lowmem.store_ddra_sets    = false;
+%   cfg.lowmem.append_csv         = true;
+%   cfg.lowmem.zonotopeOrder_cap  = 50;
+%
+% Outputs:
+%   - CSV + plots stored via init_io() under experiments/results/{data,plots}/<tag>_sweeps
+
 rng(1,'twister');
 
 % ---------- Minimal cfg ----------
@@ -45,10 +64,9 @@ cfg.gray.methodsGray = ["graySeq"];
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
-sweep_grid.D_list       = [2];
+sweep_grid.D_list       = [3];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = [2 4 8 16 32];
-sweep_grid.n_m_list = [2 4];
 sweep_grid.n_s_list = 1;
 sweep_grid.n_k_list = 10;
 sweep_grid.pe_list = {struct('mode','randn')};  % keep excitation mode fixed

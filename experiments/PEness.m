@@ -1,3 +1,22 @@
+%% HOW TO USE (Persistency-of-Excitation Sweep)
+% What it does:
+%   Fixes dimension and sweeps input shape & PE order (L) to study their effect on
+%   DDRA/Gray fidelity, conservatism, and runtime.
+%
+% Key knobs:
+%   - sweep_grid.pe_list: array of structs like struct('mode','randn','order',L,'strength',1,'deterministic',true)
+%                         or struct('mode','sinWave',...).
+%   - Keep other budgets fixed: cfg.shared.n_m, n_s, n_k; dimension via sweep_grid.D_list.
+%
+% Memory-efficiency toggles (recommended ON for PE sweeps):
+%   cfg.lowmem.gray_check_contain = false;
+%   cfg.lowmem.store_ddra_sets    = false;
+%   cfg.lowmem.append_csv         = true;
+%   cfg.lowmem.zonotopeOrder_cap  = 50;
+%
+% Outputs:
+%   - CSV and 2x figures: (i) Fidelity/Conservatism vs PE order (ii) Runtime vs PE order.
+
 rng(1,'twister');
 
 cfg = struct();
