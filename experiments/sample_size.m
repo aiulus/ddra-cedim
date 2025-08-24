@@ -71,6 +71,13 @@ sweep_grid.n_s_list = 1;
 sweep_grid.n_k_list = 10;
 sweep_grid.pe_list = {struct('mode','randn')};  % keep excitation mode fixed
 
+% New: Memory efficiency toggles
+cfg.lowmem = struct();
+cfg.lowmem.gray_check_contain = true;   % don’t do expensive Gray containment
+cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metrics on the fly
+cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
+cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
+
 % ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
 
