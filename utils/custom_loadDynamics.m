@@ -101,7 +101,7 @@ switch dynamics
         D   = p.k;   dt = p.dt;
 
         % --- broadcast scalars to vectors ---
-        m   = p.m;    if isscalar(m),    m    = m   * ones(D,1);    else, m = m(:);    end
+        masses   = p.m;    if isscalar(masses),    masses    = masses   * ones(D,1);    else, masses = masses(:);    end
         cds = p.c_d;  if isscalar(cds),  cds  = cds * ones(D,1);    else, cds = cds(:);end
         ks  = p.k_s;  if isscalar(ks),   ks   = ks  * ones(D+1,1);  else, ks = ks(:);  end
         l   = p.l;    if isscalar(l),    l    = l   * ones(D+1,1);  else, l = l(:);    end
@@ -115,7 +115,8 @@ switch dynamics
         Kc   = diag(main) + diag(off,1) + diag(off,-1);
 
         Cc = diag(cds);
-        M  = diag(m);
+        m_vec = p.m; if isscalar(m_vec), m_vec = m_vec*ones(D,1); else, m_vec = m_vec(:); end
+        M = diag(m_vec);
 
         % --- preload from natural lengths and right wall; equilibrium shift q = x - xbar ---
         s = zeros(D,1);
@@ -134,18 +135,38 @@ switch dynamics
         sysc = ss(A_c, B_c, eye(2*D), zeros(2*D,D));
         sysd = c2d(sysc, dt);
 
-        % --- nonlinear onsite saturation term ---
+                % ---------- control augmentation (optional) ----------
+        ctrl = struct(); if isfield(p,'ctrl'), ctrl = p.ctrl; end
+        ID = eye(D);
+
+        if isfield(ctrl,'S')
+            S = ctrl.S;
+        elseif isfield(ctrl,'idx')
+            S = ID(:, unique(ctrl.idx(:)'));
+        elseif isfield(ctrl,'arch') && strcmpi(ctrl.arch,'boundary') && D>=2
+            S = ID(:, [1 D]);
+        elseif isfield(ctrl,'arch') && strcmpi(ctrl.arch,'alternate')
+            S = ID(:, 1:2:D);
+        else
+            S = ID;
+        end
+
+        if isfield(ctrl,'K'), K = ctrl.K; else, K = zeros(D,2*D); end
+
+        Bk = sysd.B * K;     % (2D x 2D)
+        Bv = sysd.B * S;     % (2D x m)
+
+        % one-step map: (A + B K) z + B S v + saturated onsite term
         Knl   = diag(knl);
         Gamma = diag(gam);
+        fun = @(z,v) (sysd.A + Bk)*z + Bv*v ...
+                     + [zeros(D,1); dt * ( M \ ( -Knl * tanh(Gamma * z(1:D)) ) )];
 
-        % one-step map: linear ZOH + explicit increment for tanh term
-        fun = @(z,u) sysd.A*z + sysd.B*u + [zeros(D,1); dt * ( M \ ( -Knl * tanh(Gamma * z(1:D)) ) )];
+        m_u = size(S,2);    
+        dim_x = 2*D; dim_u = m_u;
+        sys = nonlinearSysDT('kLipMSD', fun, dt, dim_x, dim_u);
 
-        dim_x = 2*D; dim_u = D; dim_y = 2*D;
-        %out_fun = @(z,u) z;  % full state
-        sys = nonlinearSysDT('kSatMSD', fun, dt, dim_x, dim_u);
-
-        % --- default uncertainty sets ---
+        % ---------- sets (dim_u becomes m) ----------
         switch type
             case "standard"
                 R0 = zonotope([zeros(dim_x,1), 0.1*eye(dim_x)]);
@@ -158,8 +179,10 @@ switch dynamics
                 U  = zonotope([0.1*randn(dim_u,1), 0.05*randn(dim_u, max(2, ceil(dim_u/3)))]);
         end
 
-        p_true = struct('m',m,'k_s',ks,'c_d',cds,'l',l,'L',Lw,...
+        p_true = struct('m',m_vec,'k_s',ks,'c_d',cds,'l',l,'L',Lw,...
                         'k_nl',knl,'gamma',gam,'xbar',xbar,'dt',dt);
+        p_true.ctrl = struct('K', K, 'S', S);
+        p_true.m_act = size(S,2);
 
     case {"kDuffingMSD", "k- Duffing-MSD"}
         % MSD chain with onsite cubic springs: locally Lipschitz polynomial.
@@ -195,7 +218,7 @@ switch dynamics
         D  = p.k;          dt = p.dt;
 
         % Broadcast scalars to vectors
-        m   = p.m;    if isscalar(m),    m    = m   * ones(D,1);   else, m = m(:);    end
+        masses   = p.m;    if isscalar(masses),    masses    = masses   * ones(D,1);   else, masses = masses(:);    end
         cds = p.c_d;  if isscalar(cds),  cds  = cds * ones(D,1);   else, cds = cds(:);end
         ks  = p.k_s;  if isscalar(ks),   ks   = ks  * ones(D+1,1); else, ks = ks(:);  end
         l   = p.l;    if isscalar(l),    l    = l   * ones(D+1,1); else, l = l(:);    end
@@ -208,7 +231,8 @@ switch dynamics
         Kc   = diag(main) + diag(off,1) + diag(off,-1);
 
         Cc = diag(cds);
-        M  = diag(m);
+        m_vec = p.m; if isscalar(m_vec), m_vec = m_vec*ones(D,1); else, m_vec = m_vec(:); end
+        M = diag(m_vec);
 
         % Affine preload -> equilibrium shift
         s = zeros(D,1);
@@ -223,15 +247,36 @@ switch dynamics
         % Nonlinear Euler step
         % z = [q; v];  qdot = v;  vdot = M^{-1}(-Kc q - Cc v - Gamma q.^3 + u)
         Gamma = diag(gam);
-        fun = @(z,u) [ ...
-            z(1:D) + dt * z(D+1:end) ; ...
-            z(D+1:end) + dt * ( M \ ( -Kc*z(1:D) - Cc*z(D+1:end) - Gamma*(z(1:D).^3) + u ) ) ];
+                % ---------- control augmentation (optional) ----------
+        ctrl = struct(); if isfield(p,'ctrl'), ctrl = p.ctrl; end
+        ID = eye(D);
 
-        dim_x = 2*D; dim_u = D; dim_y = 2*D;
-        %out_fun = @(z,u) z;   % full state
+        if isfield(ctrl,'S')
+            S = ctrl.S;
+        elseif isfield(ctrl,'idx')
+            S = ID(:, unique(ctrl.idx(:)'));
+        elseif isfield(ctrl,'arch') && strcmpi(ctrl.arch,'boundary') && D>=2
+            S = ID(:, [1 D]);
+        elseif isfield(ctrl,'arch') && strcmpi(ctrl.arch,'alternate')
+            S = ID(:, 1:2:D);
+        else
+            S = ID;
+        end
+
+        if isfield(ctrl,'K'), K = ctrl.K; else, K = zeros(D,2*D); end
+
+        % z = [q; v];  qdot = v;
+        % vdot = M^{-1}(-Kc q - Cc v - Gamma q.^3 + K z + S v_exo)
+        fun = @(z,v_exo) [ ...
+            z(1:D) + dt * z(D+1:end) ; ...
+            z(D+1:end) + dt * ( M \ ( -Kc*z(1:D) - Cc*z(D+1:end) ...
+                                     - Gamma*(z(1:D).^3) + K*z + S*v_exo ) ) ];
+        
+        m_u = size(S,2);    
+        dim_x = 2*D; dim_u = m_u;
         sys = nonlinearSysDT('kDuffingMSD', fun, dt, dim_x, dim_u);
 
-        % Uncertainty sets
+        % ---------- sets (dim_u becomes m) ----------
         switch type
             case "standard"
                 R0 = zonotope([zeros(dim_x,1), 0.1*eye(dim_x)]);
@@ -244,7 +289,9 @@ switch dynamics
                 U  = zonotope([0.1*randn(dim_u,1), 0.05*randn(dim_u, max(2, ceil(dim_u/3)))]);
         end
 
-        p_true = struct('m',m,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'gamma',gam,'xbar',xbar,'dt',dt);
+        p_true = struct('m',m_vec,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'gamma',gam,'xbar',xbar,'dt',dt);
+        p_true.ctrl = struct('K', K, 'S', S);
+        p_true.m_act = size(S,2);
 
     % ===== NEW: globally Lipschitz 2D system (state-space) =====
     case "lipschitz2D"
@@ -392,7 +439,7 @@ switch dynamics
         dt  = p.dt;
 
         % Broadcast scalars to vectors
-        m   = p.m;   if isscalar(m),   m   = m   * ones(D,1);     else, m = m(:);   end
+        masses   = p.m;   if isscalar(masses),   masses   = masses   * ones(D,1);     else, masses = masses(:);   end
         cds = p.c_d; if isscalar(cds), cds = cds * ones(D,1);     else, cds = cds(:); end
         ks  = p.k_s; if isscalar(ks),  ks  = ks  * ones(D+1,1);   else, ks  = ks(:);  end
         l   = p.l;   if isscalar(l),   l   = l   * ones(D+1,1);   else, l   = l(:);   end
@@ -408,7 +455,9 @@ switch dynamics
         Cc = diag(cds);
 
         % --- mass matrix ---
-        M  = diag(m);
+        m_vec = p.m; if isscalar(m_vec), m_vec = m_vec*ones(D,1); else, m_vec = m_vec(:); end
+        M = diag(m_vec);
+
 
         % --- affine load from natural lengths & right wall X_{D+1}=L ---
         s = zeros(D,1);
@@ -437,40 +486,58 @@ switch dynamics
         sysc = ss(A_c, B_c, C_c, D_c);
         sysd = c2d(sysc, dt);
 
-        % Wrap as CORA linearSysDT; state is z = [q; v]
-        sys  = linearSysDT(sysd.A, sysd.B, [], sysd.C, sysd.D, dt);
+        % ---------- control augmentation (optional) ----------
+        % Build K (D x 2D) and S (D x m)
+        ctrl = struct(); if isfield(p,'ctrl'), ctrl = p.ctrl; end
+        ID = eye(D);
 
-        % --- default uncertainty sets (same style as your pattern) ---
-        dim_x = 2*D;
-        dim_u = D;
-        switch type
-            case "standard"
-                c_R0 = zeros(dim_x,1);
-                G_R0 = 0.1*eye(dim_x);
-                c_U  = zeros(dim_u,1);
-                G_U  = 0.2*eye(dim_u);
-
-            case "diag"
-                c_R0 = 0.05*randn(dim_x,1);
-                G_R0 = 0.05*eye(dim_x);
-                c_U  = 0.05*randn(dim_u,1);
-                G_U  = 0.1*eye(dim_u);
-
-            case "rand"
-                c_R0 = 0.1*randn(dim_x,1);
-                G_R0 = 0.05*randn(dim_x, max(2, ceil(dim_x/6)));
-                c_U  = 0.1*randn(dim_u,1);
-                G_U  = 0.05*randn(dim_u, max(2, ceil(dim_u/3)));
-
-            otherwise
-                error('Unknown type "%s". Use "standard", "diag", or "rand".', string(type));
+        % S selection
+        if isfield(ctrl,'S')
+            S = ctrl.S;
+        elseif isfield(ctrl,'idx')
+            S = ID(:, unique(ctrl.idx(:)'));
+        elseif isfield(ctrl,'arch') && strcmpi(ctrl.arch,'boundary') && D>=2
+            S = ID(:, [1 D]);
+        elseif isfield(ctrl,'arch') && strcmpi(ctrl.arch,'alternate')
+            S = ID(:, 1:2:D);
+        else
+            S = ID;  % full actuation
         end
 
-        R0 = zonotope([c_R0, G_R0]);
-        U  = zonotope([c_U,  G_U]);
+        % K gain
+        if isfield(ctrl,'K')
+            K = ctrl.K;  % (D x 2D)
+        else
+            K = zeros(D, 2*D);
+        end
+
+        % Closed-loop A, exogenous B
+        m_u = size(S,2);
+        A_cl = sysd.A + sysd.B*K;
+        B_ex = sysd.B*S;
+        C_d  = eye(2*D);
+        D_d  = zeros(2*D, m_u);
+        sys  = linearSysDT(A_cl, B_ex, [], C_d, D_d, dt);
+
+
+        % ---------- sets (dim_u becomes m) ----------   
+        dim_x = 2*D; dim_u = m_u;
+        switch type
+            case "standard"
+                R0 = zonotope([zeros(dim_x,1), 0.1*eye(dim_x)]);
+                U  = zonotope([zeros(dim_u,1), 0.2*eye(dim_u)]);
+            case "diag"
+                R0 = zonotope([0.05*randn(dim_x,1), 0.05*eye(dim_x)]);
+                U  = zonotope([0.05*randn(dim_u,1), 0.1*eye(dim_u)]);
+            case "rand"
+                R0 = zonotope([0.1*randn(dim_x,1), 0.05*randn(dim_x, max(2, ceil(dim_x/6)))]);
+                U  = zonotope([0.1*randn(dim_u,1), 0.05*randn(dim_u, max(2, ceil(dim_u/3)))]);
+        end
 
         % Expose true parameters (and shift) for downstream use
-        p_true = struct('m',m,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'xbar',xbar);
+        p_true = struct('m',m_vec,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'xbar',xbar);
+        p_true.ctrl = struct('K', K, 'S', S);
+        p_true.m_act = size(S,2);
 
 
     case "ddra5"

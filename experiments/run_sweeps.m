@@ -69,7 +69,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     [sizeI_ddra, cval_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W, M_AB, C);
                     Tinfer = toc(t2);
                 end
-                clear Xminus Uminus Xplus W  % free data blocks early
+                clear Xminus Uminus Xplus   % free data blocks early
 
                 % ================= GRAY =================
 
@@ -81,7 +81,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
 
                 t3 = tic;
-                configs = gray_identify(sys_cora, R0, U, C, pe, 'overrideW', W_for_gray);
+                %configs = gray_identify_noiseMatched(sys_cora, R0, U, C, pe, 'overrideW', W_for_gray);
+                configs = gray_identify(sys_cora, R0, U, C, pe);
                 Tlearn_g = toc(t3);
                 % ================= End: New Patch =================
 

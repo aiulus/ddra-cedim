@@ -25,7 +25,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     LM = getfielddef(C,'lowmem', struct());
     ccflag = getfielddef(LM, 'gray_check_contain', true);
 
-    % ---- conformance options for wrapper 
+    % ---- conformance options for wrapper ----
     conf_opts = struct('options_reach', C.shared.options_reach, ...
                        'cs', C.shared.cs_base, ...
                        'testS', optTS, ...
@@ -35,10 +35,11 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
         conf_opts.W = W_override;   % optional for conformance_gray
     end
 
+    % Optional
     try
         R_tmp = conformance_gray(lookup, conf_opts); 
     catch
-        % Wrapper missing W support / Default to the core call below
+        % Wrapper missing W support / Defaults to the core call below.
     end
 
     % ---- Build minimal configs {true, gray} used elsewhere ----

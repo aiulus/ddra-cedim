@@ -59,7 +59,7 @@ function SUMMARY = run_sweeps_lip_rcsi(cfg, grid)
             n_m_train = getfielddef(cfg, {'black','train','n_m'}, 50);
             n_s_train = getfielddef(cfg, {'black','train','n_s'}, 5);
             n_k_train = getfielddef(cfg, {'black','train','n_k'}, n_k);
-            params_true.testSuite_train = createTestSuite(sys, params_true, n_k_train, n_m_train, n_s_train);
+            params_true.testSuite_train = createTestSuite(sys, params_true, n_k_train, n_m_train, n_s_train, ts_opts);
 
             % (c) VALIDATION suite (recommended)
             n_m_val = getfielddef(shared,'n_m_val',2);
@@ -71,32 +71,25 @@ function SUMMARY = run_sweeps_lip_rcsi(cfg, grid)
             % ---------- Conformance options ----------
             options = options_reach;
             options.cs = getfielddef(shared,'cs_base',struct());
-            % blackCGP budgets (light defaults; override via cfg.black.approx.*)
-
-            u_lags = getfielddef(cfg, {'black','approx','u_lags'}, n_k_train - 1);
-            y_lags = getfielddef(cfg, {'black','approx','y_lags'}, 0);  % keep 0 for state-space
+            
+            % single ARX order p (use train horizon - 1)
+            p = getfielddef(cfg, {'black','approx','p'}, 1);
             
             options.approx = struct( ...
-                'cgp_num_gen',        getfielddef(cfg, {'black','approx','cgp_num_gen'},       5), ...
+                'cgp_num_gen',        getfielddef(cfg, {'black','approx','cgp_num_gen'}, 5), ...
                 'cgp_pop_size_base',  getfielddef(cfg, {'black','approx','cgp_pop_size_base'}, 10), ...
                 'gp_parallel',        false, ...
                 'save_res',           false, ...
-                'u_lags',             u_lags, ...   % for our bookkeeping
-                'y_lags',             y_lags, ...   % for our bookkeeping
-                'p',                  u_lags ...    % <-- IMPORTANT: what config_gp will actually read
+                'p',                  p ...
             );
             
-
-            % ---------- Initial guesses (CORA style) ----------
+            % ---------- Initial guesses ----------
             cR0 = center(R0);  cU = center(U); cU = cU(:);
-            params_id_init = params_true;               % KEEP testSuite_* fields
-            params_id_init.R0 = zonotope([cR0]);        % 0-radius
-            % ensure GP sees the train horizon
+            params_id_init        = params_true;   % KEEP testSuite_* fields
+            params_id_init.R0     = zonotope([cR0]);                  % 0-radius
+            params_id_init.U      = zonotope([cU, eye(numel(cU))]);
             params_id_init.tFinal = sys.dt * (n_k_train - 1);
-
-            nu = numel(cU);
-            params_id_init.U  = zonotope([cU, eye(nu), ones(nu,1)]);
-            params_id_init.n_p = u_lags;
+            params_id_init.n_p    = p;                                     
 
             % ---------- Run black-box identification (only blackCGP) ----------
             method  = "blackCGP";
