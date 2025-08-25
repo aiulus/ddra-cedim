@@ -77,9 +77,9 @@ cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
 
 % ---------- Sweep grid (vary only D) ----------
 sweep_grid = struct();
-sweep_grid.D_list = [2 3 4 5 6];       % dimensional scalability
+%sweep_grid.D_list = [2 3 4 5 6];       % dimensional scalability
 %sweep_grid.D_list = [2 3 4 5 6 7 8 9 10];
-%sweep_grid.D_list = [2];
+sweep_grid.D_list = [2];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = cfg.shared.n_m;
 sweep_grid.n_s_list = cfg.shared.n_s;
