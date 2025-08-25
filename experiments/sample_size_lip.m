@@ -46,13 +46,14 @@ cfg.shared.cs_base = struct( ...
 cfg.shared.n_m     = 3;   % identification: # input trajectories
 cfg.shared.n_s     = 10;  % samples per input trajectory
 cfg.shared.n_k     = 6;   % horizon (train)
-cfg.shared.n_m_val = 2;   % validation: # input trajectories
+cfg.shared.n_m_val = cfg.shared.n_m;   % validation: # input trajectories
 cfg.shared.n_s_val = cfg.shared.n_s;
 cfg.shared.n_k_val = cfg.shared.n_k;
 
 % Black-box RCSI methods (you can include one or both)
 cfg.black = struct();
 cfg.black.methodsBlack = ["blackCGP"];   % or ["blackGP","blackCGP"]
+cfg.black.approx = tiny_preset(); % Comment out if full GPTIPS run wanted
 
 % (Optional) lighter CGP for speed
 %cfg.black.approx = struct('cgp_num_gen', 5, 'cgp_pop_size_base', 10);
@@ -69,11 +70,15 @@ cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
-sweep_grid.D_list       = 4;           % dimension of the MSD chain (q,v -> 2D states)
-sweep_grid.n_m_list     = [2 4 8 16];  % <-- sweep here
-sweep_grid.n_s_list     = cfg.shared.n_s;
-sweep_grid.n_k_list     = cfg.shared.n_k;
-sweep_grid.pe_list      = {struct('mode','randn','order',2,'strength',1,'deterministic',true)};
+%sweep_grid.D_list       = 4;           % dimension of the MSD chain (q,v -> 2D states)
+%sweep_grid.n_m_list     = [2 4 8 16];  % <-- sweep here
+
+sweep_grid.D_list       = 2;           % dimension of the MSD chain (q,v -> 2D states)
+%sweep_grid.n_m_list     = [2 4];  % <-- sweep here
+
+%sweep_grid.n_s_list     = cfg.shared.n_s;
+%sweep_grid.n_k_list     = cfg.shared.n_k;
+%sweep_grid.pe_list      = {struct('mode','randn','order',2,'strength',1,'deterministic',true)};
 
 % ---------- Low-memory toggles ----------
 cfg.lowmem = struct();
@@ -111,3 +116,30 @@ title(['Conservatism vs n_m  (RCSI: ' rcsi_lbl ', kLipMSD)']); legend('Location'
 save_plot(f, plots_dir, ['lip_fid_cons_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 close all force
+
+%% >>> Helpers that define smaller GPTIPS runs for faster debugging
+function approx = tiny_preset()
+    approx = struct( ...
+      'p', 1, 'gp_num_gen', 5, 'cgp_num_gen', 2, 'cgp_pop_size_base', 20, ...
+      'save_res', false, 'verbose', true, ...
+      'gp', struct('pop_size', 40,'num_gen', 6,'num_runs', 1, ...
+                   'tournament_size', 5,'elite_fraction', 0.1, ...
+                   'max_depth', 3,'max_nodes', 60,'max_genes', 2, ...
+                   'const_range',[-1 1],'functions',{{'PLUS','MINUS','TIMES','TANH'}}, ...
+                   'use_rdivide', false, 'complexity','expressional', ...
+                   'lexicographic', true,'parallel', false, ...
+                   'fitness_goal', 5e-3,'stall_limit', 3,'seed', 1));
+end
+
+function approx = fast_preset()
+    approx = struct( ...
+      'p', 1, 'gp_num_gen', 12, 'cgp_num_gen', 4, 'cgp_pop_size_base', 40, ...
+      'save_res', false, 'verbose', true, ...
+      'gp', struct('pop_size', 80,'num_gen', 12,'num_runs', 1, ...
+                   'tournament_size', 7,'elite_fraction', 0.15, ...
+                   'max_depth', 4,'max_nodes', 120,'max_genes', 3, ...
+                   'const_range',[-2 2],'functions',{{'PLUS','MINUS','TIMES','TANH','SQUARE'}}, ...
+                   'use_rdivide', false, 'complexity','expressional', ...
+                   'lexicographic', true,'parallel', false, ...
+                   'fitness_goal', 1e-3,'stall_limit', 5,'seed', 1));
+end
