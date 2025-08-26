@@ -79,10 +79,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                 if isfield(C.shared,'noise_for_gray') && ~C.shared.noise_for_gray
                     W_for_gray = zonotope(zeros(size(center(W),1),1)); % zero disturbance
                 end
-
+                optTS = ts_options_from_pe(C, pe, sys_cora);
                 t3 = tic;
                 %configs = gray_identify_noiseMatched(sys_cora, R0, U, C, pe, 'overrideW', W_for_gray);
-                configs = gray_identify(sys_cora, R0, U, C, pe);
+                configs = gray_identify(sys_cora, R0, U, C, pe, 'options_testS', optTS);
                 Tlearn_g = toc(t3);
                 % ================= End: New Patch =================
 
@@ -134,7 +134,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                     end
                 end
 
-                % free leftover biggies (paranoia)
                 clear M_AB Zinfo sizeI_ddra sizeI_gray
               end
             end

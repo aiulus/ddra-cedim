@@ -1,18 +1,32 @@
-function optTS = ts_options_from_pe(C, pe, sys)
-% Build CORA testSuite options from our PE spec, mirroring DDRA's shapes
-    n_u = sys.nrOfInputs;
-    n_k = C.shared.n_k;
-    dt  = sys.dt;
-    % (n_m not directly used by createTestSuite options, but kept for symmetry)
-    % n_m = C.shared.n_m; 
+function optTS = ts_options_from_pe(C, pe, ~)
+%TS_OPTIONS_FROM_PE  Build testSuite options consistent with additional PE spec.
 
-    [optTS, ~] = pe_param_synth(pe, n_u, n_k, dt);
+    % -------- defaults --------
+    optTS = struct();
+    % p_extr default
+    if isstruct(C) && isfield(C,'shared') && isfield(C.shared,'p_extr') ...
+            && ~isempty(C.shared.p_extr)
+        optTS.p_extr = C.shared.p_extr;
+    else
+        optTS.p_extr = 0.3;
+    end
 
-    % Match global knobs
-    optTS.p_extr    = getfielddef(C.shared,'p_extr', 0.3);
-    optTS.contInput = true;  % CORA default 
-end
+    % inputCurve mapping
+    mode = 'rand';  % CORA expects "rand" / "sin" / etc.
+    if nargin >= 2 && ~isempty(pe) && isstruct(pe) && isfield(pe,'mode') && ~isempty(pe.mode)
+        m = lower(char(pe.mode));
+        switch m
+            case {'randn','rand'}
+                mode = 'rand';
+            case {'sin','sinwave','sine'}
+                mode = 'sin';
+            % add other mappings here if you introduce new PE modes:
+            % case {'step','steps'},  mode = 'steps';
+            otherwise
+                mode = 'rand';
+        end
+    end
+    optTS.inputCurve = string(mode);
 
-function v = getfielddef(S, f, d)
-    if isstruct(S) && isfield(S,f), v = S.(f); else, v = d; end
+    % if isfield(pe,'strength'), optTS.inputStrength = pe.strength; end
 end

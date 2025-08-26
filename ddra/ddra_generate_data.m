@@ -97,7 +97,7 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     Xplus  = zeros(dim_x, N);
 
     col = 0;
-    for m = 1<n_m
+    for m = 1:n_m
         U_nom = U_nom_all{m}; % (n_u × n_k), reuse across samples s
 
         for s = 1:n_s

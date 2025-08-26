@@ -60,7 +60,6 @@ sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;
 sweep_grid.n_k_list      = cfg.shared.n_k;
 PE_orders = [1 2 3 4 5 6 7 8 9 10];
-PE_orders = [1 2 3];
 sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','randn','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0), ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
@@ -68,6 +67,11 @@ sweep_grid.pe_list = [ ...
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
+% Honor an optional cap on zonotopeOrder (keeps sets smaller during sweeps)
+if isfield(cfg,'lowmem') && isfield(cfg.lowmem,'zonotopeOrder_cap')
+    cfg.shared.options_reach.zonotopeOrder = min( ...
+        cfg.shared.options_reach.zonotopeOrder, cfg.lowmem.zonotopeOrder_cap);
+end
 cfg.lowmem.gray_check_contain = false;   % don’t do expensive Gray containment
 cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metrics on the fly
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
