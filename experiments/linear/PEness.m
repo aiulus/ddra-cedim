@@ -1,21 +1,34 @@
-%% HOW TO USE (Persistency-of-Excitation Sweep)
-% What it does:
-%   Fixes dimension and sweeps input shape & PE order (L) to study their effect on
-%   DDRA/Gray fidelity, conservatism, and runtime.
+%% HOW TO USE — Persistency-of-Excitation Sweep (DDRA vs RCSI/Gray)
+% What this does
+%   Fixes dimension D and sweeps input shape/mode and PE order L to study effects on:
+%     (i) fidelity (containment %)  (ii) conservatism (interval-size proxy)  (iii) runtime
 %
-% Key knobs:
-%   - sweep_grid.pe_list: array of structs like struct('mode','randn','order',L,'strength',1,'deterministic',true)
-%                         or struct('mode','sinWave',...).
-%   - Keep other budgets fixed: cfg.shared.n_m, n_s, n_k; dimension via sweep_grid.D_list.
+% Equal-setting evaluation protocol 
+%   • Shared datasets: The exact (x0,u,y) sequences are used for both DDRA and Gray.
+%   • Unified noise policy: use_noise = shared.noise_for_gray && shared.noise_for_ddra
+%       - When false, both methods operate with W=0 (comparable).
+%   • Ridge guard: cfg.ddra.allow_ridge=false → rank-deficient cases are skipped (flagged).
+%   • Metrics on the same points:
+%       Containment: point-in-interval-hull of OUTPUT sets on VAL (identical for both).
+%       Size proxy: aggregated interval width of OUTPUT sets across VAL (identical).
+%   • Set reduction policy: common Girard reduction with the same order cap.
 %
-% Memory-efficiency toggles (recommended ON for PE sweeps):
-%   cfg.lowmem.gray_check_contain = false;
-%   cfg.lowmem.store_ddra_sets    = false;
-%   cfg.lowmem.append_csv         = true;
-%   cfg.lowmem.zonotopeOrder_cap  = 50;
+%% Key knobs
+%   • Fix D via sweep_grid.D_list = 2 (for example).
+%   • PE sweep: sweep_grid.pe_list = array of structs such as:
+%       struct('mode','randn','order',L,'strength',1,'deterministic',true)
+%       struct('mode','sinWave','order',L,...)  % for sinusoidal families
+%   • Data budgets: cfg.shared.n_m, n_s, n_k (+ *_val for validation)
 %
-% Outputs:
-%   - CSV and 2x figures: (i) Fidelity/Conservatism vs PE order (ii) Runtime vs PE order.
+% Memory / IO toggles (recommended ON for large PE sweeps)
+%   cfg.lowmem.gray_check_contain = false;   % skip heavy Gray checks (we use the light checker)
+%   cfg.lowmem.store_ddra_sets    = false;   % streaming path for DDRA (lower memory)
+%   cfg.lowmem.append_csv         = true;    % stream to CSV
+%   cfg.lowmem.zonotopeOrder_cap  = 50;      % keep sets compact
+%
+%% Outputs
+%   CSV + plots in experiments/results/{data,plots}/<save_tag>_sweeps
+
 
 rng(1,'twister');
 

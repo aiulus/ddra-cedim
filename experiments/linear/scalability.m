@@ -1,26 +1,29 @@
-%% HOW TO USE (State-Dimension Scalability)
-% What it does:
-%   Sweeps system state dimension D on a k-MSD chain and compares DDRA vs. Gray.
-%   Outputs: CSV (metrics per run) + plots for Fidelity/Conservatism and Runtime panels.
+%% HOW TO USE — State-Dimension Scalability (DDRA vs RCSI/Gray)
+% What this does
+%   Sweeps the state dimension D on the k-Mass-Spring-Damper chain and compares:
+%     (i) fidelity (containment %) (ii) conservatism (interval-size proxy) (iii) runtime
 %
-% Key knobs (edit below in the cfg/sweep_grid blocks):
-%   - cfg.shared.dyn / .type : system family and CORA uncertainty preset
-%   - D_list                 : dimensions to test (sweep_grid.D_list)
-%   - Data budget            : cfg.shared.n_m, n_s, n_k (+ *_val for validation)
-%   - Input excitation       : sweep_grid.pe_list (use struct('mode','randn') for default)
+% Equal-setting evaluation protocol 
+%   • Shared datasets: DDRA and Gray use the same (x0,u,y) sequences for TRAIN/VAL.
+%   • Unified noise policy: use_noise = shared.noise_for_gray && shared.noise_for_ddra.
+%   • Ridge guard: if cfg.ddra.allow_ridge=false and Z is rank-deficient → skip & mark row.
+%   • Metrics and reduction: identical containment/size metrics and common Girard cap.
 %
-% Memory-efficiency toggles (safe to leave on for big sweeps):
-%   cfg.lowmem.gray_check_contain = false; % skip expensive Gray point-wise contain checks
-%   cfg.lowmem.store_ddra_sets    = false; % stream DDRA metrics; don’t keep all sets in RAM
-%   cfg.lowmem.append_csv         = true;  % stream summary.csv row-by-row to disk
-%   cfg.lowmem.zonotopeOrder_cap  = 50;    % optional: cap order in streaming to reduce memory
+%% Key knobs
+%   • Dimension sweep: sweep_grid.D_list = [2 3 4 5 ...]
+%   • Fixed budgets: cfg.shared.n_m, n_s, n_k (+ *_val)
+%   • Excitation: sweep_grid.pe_list = {struct('mode','randn')} (simple default)
 %
-% Outputs:
-%   - CSV: experiments/results/data/<save_tag>_sweeps/summary.csv
-%   - Plots: experiments/results/plots/<save_tag>_sweeps/*.png|pdf
+% Memory / IO toggles
+%   cfg.lowmem.gray_check_contain = false;   % lightweight interval-based checks
+%   cfg.lowmem.store_ddra_sets    = false;   % streaming DDRA metrics
+%   cfg.lowmem.append_csv         = true;    % stream rows to disk
+%   cfg.lowmem.zonotopeOrder_cap  = 50;      % reduce memory footprint
 %
-% Tip:
-%   Set cfg.io.save_tag to name your experiment folder(s).
+%% Outputs
+%   CSV:   experiments/results/data/<save_tag>_sweeps/summary.csv
+%   Plots: experiments/results/plots/<save_tag>_sweeps/*.png|pdf
+
 
 rng(1,'twister');
 

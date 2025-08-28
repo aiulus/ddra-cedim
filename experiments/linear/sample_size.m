@@ -1,21 +1,41 @@
-%% HOW TO USE (Sample-Size Sweep)
-% What it does:
-%   Varies the number of unique input trajectories n_m (and can vary n_s, n_k)
-%   at fixed dimension, producing (i) runtime panels and (ii) fidelity/conservatism plots.
+%% HOW TO USE — Sample-Size Sweep (DDRA vs RCSI/Gray)
+% What this does
+%   Sweeps the number of distinct nominal input trajectories n_m (optionally n_s, n_k)
+%   at fixed dimension, producing:
+%     (i) runtime panels (total / learn / validation / inference)
+%     (ii) fidelity (containment %) and conservatism (interval-size proxy) plots.
 %
-% Key knobs:
-%   - sweep_grid.n_m_list (e.g., [2 4 8 16 32])
-%   - Fix dimension via sweep_grid.D_list = <D>;
-%   - Keep excitation fixed: sweep_grid.pe_list = {struct('mode','randn')};
+% Equal-setting evaluation protocol 
+%   • Shared datasets: We generate TRAIN/VAL datasets once via ddra_generate_data and
+%     pass the exact same (x0,u,y) sequences to both DDRA and Gray.
+%   • Unified noise policy: A single switch controls whether both methods use W≠0 or W=0.
+%       - Effective rule: use_noise = shared.noise_for_gray && shared.noise_for_ddra
+%       - If false → Gray runs with W=0 and DDRA uses W=0 (hard zero zonotope).
+%   • Ridge guard (DDRA): 
+%       cfg.ddra.allow_ridge=false (default) → rank-deficient Z → the sweep point is skipped
+%       (row marked as skipped in CSV). If true → ridge is used and uncertainty is widened.
+%   • Metrics are identical across methods on the SAME points:
+%       Containment: point-in-interval-hull of the OUTPUT reachable set (contains_interval).
+%       Size proxy: aggregated output-interval width across VAL (not state size).
+%   • Set reduction policy: consistent Girard reduction with cap
+%       (cfg.lowmem.zonotopeOrder_cap applies in streaming; options_reach.zonotopeOrder otherwise).
 %
-% Memory-efficiency toggles:
-%   cfg.lowmem.gray_check_contain = false;
-%   cfg.lowmem.store_ddra_sets    = false;
-%   cfg.lowmem.append_csv         = true;
-%   cfg.lowmem.zonotopeOrder_cap  = 50;
+%% Key knobs
+%   • Dimension:  sweep_grid.D_list = [D]; e.g., 2 or 5
+%   • Sample size axes: sweep_grid.n_m_list (e.g., [2 4 8 16 32 64])
+%                       optionally n_s_list, n_k_list
+%   • Excitation (fixed recommended): sweep_grid.pe_list = {struct('mode','randn',...)}
 %
-% Outputs:
-%   - CSV + plots stored via init_io() under experiments/results/{data,plots}/<tag>_sweeps
+% Memory / IO toggles (safe defaults shown)
+%   cfg.lowmem.gray_check_contain = true;    % light, interval-based containment on VAL
+%   cfg.lowmem.store_ddra_sets    = true;    % store sets; set false to use streaming path
+%   cfg.lowmem.append_csv         = true;    % stream rows to CSV on the go
+%   cfg.lowmem.zonotopeOrder_cap  = 50;      % cap order for memory friendliness
+%
+%% Outputs
+%   CSV:   experiments/results/data/<save_tag>_sweeps/summary.csv
+%   Plots: experiments/results/plots/<save_tag>_sweeps/*.png|pdf
+
 
 rng(1,'twister');
 
