@@ -93,11 +93,14 @@ cfg.lowmem.store_ddra_sets    = true;   % don’t keep DDRA sets; compute metric
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
-% ---------- Run ----------
+%% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
 SUMMARY = ensure_time_totals(SUMMARY);
 
-% ---------- Quick plots: 4 panels (total / learn / validation / inference) ----------
+disp([SUMMARY.cval_gray SUMMARY.cval_ddra])
+disp([SUMMARY.sizeI_gray SUMMARY.sizeI_ddra])
+
+%% ---------- Visualization: 4 panels (total / learn / validation / inference) ----------
 x = coerce_numeric(SUMMARY.n_m);
 colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
 

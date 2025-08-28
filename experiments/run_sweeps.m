@@ -134,14 +134,16 @@ function SUMMARY = run_sweeps(cfg, grid)
                 configs = gray_identify(sys_cora, R0, U, C, pe, ...
                     'overrideW', W_for_gray, ...
                     'options_testS', optTS, ...
-                    'externalTS_train', TS_train);
+                    'externalTS_train', TS_train, ...
+                    'externalTS_val',   TS_val);  
                 Tlearn_g = toc(t3);
     
                 % Build VAL record (x0,u) from TS_val and pass to both sides
-                VAL = local_VAL_from_TS(TS_val);
+                VAL = local_VAL_from_TS(TS_val, DATASET_val);
     
                 % ---- Gray validation on EXACT same points (contains_interval metric)
                 [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL(configs, TS_train, TS_val, 1e-6);
+              
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
                 if LM.store_ddra_sets
@@ -213,6 +215,7 @@ function SUMMARY = run_sweeps(cfg, grid)
         fprintf('Sweeps done. Rows: %d\nCSV -> %s\n', rowi, csv_path);
         SUMMARY = cell2table(cells(1:rowi,:), 'VariableNames', hdr);
     end
+
 end
 
 % ------------------- Helpers-------------------
@@ -275,10 +278,12 @@ function TS = local_TS_from_dataset(sys_cora, ~, DATASET, n_k_override)
 
         % Measured outputs y: (a×q×s) = (n_k × n_y × 1)
         if have_Y
-            Yblk = get_Y(b);            % (n_y×n_k)
-            y_tc = reshape(Yblk.', n_k, ny, 1);
+            %Yblk = get_Y(b);            % (n_y×n_k)
+            %y_tc = reshape(Yblk.', n_k, ny, 1);
+            y_tc = permute(DATASET.Y_blocks(:,:,b), [2 1 3]);
         else
             % Fallback: if DATASET has no Y, hand in NaNs (RCSI can still reach/compare)
+            %y_tc = nan(n_k, ny, 1);
             y_tc = nan(n_k, ny, 1);
         end
 
@@ -288,15 +293,42 @@ function TS = local_TS_from_dataset(sys_cora, ~, DATASET, n_k_override)
 end
 
 function VAL = local_VAL_from_TS(TS_val, DATASET_val)
+    % Build synchronized validation record for EXACT (x0,u,y[,w]) points.
+
     B = numel(TS_val);
-    VAL = struct('x0',{cell(1,B)}, 'u',{cell(1,B)}, 'w',{cell(1,B)});
+    VAL = struct('x0',{cell(1,B)}, 'u',{cell(1,B)}, 'y',{cell(1,B)}, 'w',{cell(1,B)});
+
+    have_DS = (nargin >= 2) && ~isempty(DATASET_val);
+
     for b = 1:B
+        % x0
         VAL.x0{b} = TS_val{b}.initialState;
-        VAL.u{b}  = squeeze(TS_val{b}.u);
-        if isvector(VAL.u{b}), VAL.u{b} = VAL.u{b}(:)'; end
-        % exact disturbances if available
-        if nargin >= 2 && ~isempty(DATASET_val) && isfield(DATASET_val,'W_blocks')
-            VAL.w{b} = DATASET_val.W_blocks(:,:,b);
+
+        % u : (m × n_k)
+        Ui = squeeze(TS_val{b}.u);         % (n_k × m) or (n_k × m × 1)
+        if ndims(TS_val{b}.u) == 3, Ui = squeeze(TS_val{b}.u); end
+        if size(Ui,1) < size(Ui,2), Ui = Ui.'; end    % ensure (m × n_k)
+        VAL.u{b} = Ui;
+
+        % y : prefer DATASET_val if present; otherwise use the TS field
+        yi = [];
+        if have_DS
+            if isfield(DATASET_val,'Y_blocks')           % new layout: (ny × n_k × M)
+                yi = DATASET_val.Y_blocks(:,:,b).';      % (n_k × ny)
+            elseif isfield(DATASET_val,'y_blocks')       % rare legacy naming
+                yi = DATASET_val.y_blocks(:,:,b).';
+            end
+        end
+        if isempty(yi) && isfield(TS_val{b},'y') && ~isempty(TS_val{b}.y)
+            ti = TS_val{b}.y;                            % (n_k × ny × 1 or s)
+            yi = squeeze(ti);                            % (n_k × ny) if s==1
+            if isvector(yi), yi = yi(:); end
+        end
+        VAL.y{b} = yi;  
+
+        if have_DS && isfield(DATASET_val,'W_blocks')
+            VAL.w{b} = DATASET_val.W_blocks(:,:,b);      % (nx × n_k)
         end
     end
 end
+

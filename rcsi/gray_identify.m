@@ -99,6 +99,26 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
         % minimal p0 (only U-center if no numeric plant params)
         options.cs.p0    = 0.01*randn(sys_cora.nrOfInputs,1);
     end
+    if exist('aux_set_p_gray','file') == 2
+        options.cs.set_p = @(p,params) aux_set_p_gray(p, params, C.shared.dyn, sys_cora);
+    
+        [~, ~, ~, p_t] = custom_loadDynamics(C.shared.dyn, "diag");
+        if isnumeric(p_t) && ~isempty(p_t)
+            n_model = numel(p_t);
+            options.cs.p0 = [zeros(n_model,1); zeros(dim(params_id_init.U),1)];
+        else
+            options.cs.p0 = zeros(dim(params_id_init.U),1);   % k-MSD as currently configured
+        end
+    end
+
+
+
+    nx = sys_cora.nrOfDims; nu = sys_cora.nrOfInputs; ny = sys_cora.nrOfOutputs;
+    p0 = [sys_cora.A(:); sys_cora.B(:)];
+    options.cs.p0 = p0;
+    options.p_min = -2*ones(numel(p0),1);
+    options.p_max =  2*ones(numel(p0),1);
+
 
     % ---- identify (first gray method) ----
     type = C.gray.methodsGray(1);
