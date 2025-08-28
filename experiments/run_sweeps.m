@@ -160,18 +160,53 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
     
                 % ---- Gray size metric (interval proxy), consistent with DDRA
+                %% Start patch
+                % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
                 sizeI_gray = gray_infer_size_on_VAL(configs{2}.sys, TS_val, C, configs{2}.params);
                 Tinfer_g   = toc(t4);
-    
+                
+                % --- Optional: save plotting artifact for this row ---
+                if isfield(cfg,'io') && isfield(cfg.io,'save_artifacts') && cfg.io.save_artifacts
+                    % ensure folder
+                    artdir = fullfile(results_dir, 'artifacts');
+                    if ~exist(artdir,'dir'), mkdir(artdir); end
+                
+                    % pack only what plotting needs
+                    artifact = struct();
+                    if numel(configs) >= 2
+                        artifact.sys_gray = configs{2}.sys;    % identified RCSI/Gray model (CORA linearSysDT)
+                    else
+                        artifact.sys_gray = configs{1}.sys;    % fallback
+                    end
+                    artifact.sys_ddra = sys_ddra;              % true/nominal model (A,B,C,D,dt struct)
+                    artifact.VAL      = VAL;                   % exact (x0,u,y[,w]) used in validation
+                    artifact.W_eff    = W_eff;                 % disturbance used by DDRA
+                    artifact.meta = struct( ...
+                        'rowi', rowi+1, 'D', D, 'alpha_w', alpha_w, ...
+                        'n_m', C.shared.n_m, 'n_s', C.shared.n_s, 'n_k', C.shared.n_k, ...
+                        'pe',  pe, 'save_tag', cfg.io.save_tag);
+                
+                    % include R0 for nicer initial-set plotting (if not already present)
+                    if ~isfield(artifact.VAL,'R0') || isempty(artifact.VAL.R0)
+                        artifact.VAL.R0 = R0;
+                    end
+                
+                    artfile = fullfile(artdir, sprintf('row_%04d.mat', rowi+1));
+                    save(artfile, '-struct', 'artifact');
+                end
+                
                 clear configs  % free Gray objects early
-    
+                
                 % --- Pack row ---
                 rowi = rowi + 1;
                 row = pack_row(C, D, alpha_w, pe, ...
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
                     Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+
+
+                %% end patch
                 row.use_noise = use_noise;
                 row.ddra_ridge       = ridgeInfo.used;
                 row.ddra_lambda      = ridgeInfo.lambda;
@@ -331,4 +366,3 @@ function VAL = local_VAL_from_TS(TS_val, DATASET_val)
         end
     end
 end
-

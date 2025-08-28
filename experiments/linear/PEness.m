@@ -95,6 +95,8 @@ cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metri
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
+cfg.io.save_artifacts = true;  % opt-in: save per-row .mat with everything needed for reachset plotting
+
 % === NEW: get plots_dir once ===
 [plots_dir, ~] = init_io(cfg);
 

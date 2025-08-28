@@ -106,6 +106,8 @@ cfg.shared.noise_for_gray = false;   % if false => Gray/RCSI runs with W = 0
 cfg.shared.noise_for_ddra = true;    % DDRA uses W unless this is set to false
 cfg.shared.use_noise = false;   % or true
 
+cfg.io.save_artifacts = true;  % opt-in: save per-row .mat with everything needed for reachset plotting
+
 
 % ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
