@@ -1,65 +1,55 @@
-function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U, W, M_AB, C)
-% Streaming DDRA: size proxy + MC containment, memory friendly.
-% Unified reduction knob via red_order(C), with a legacy switch:
-%   C.lowmem.legacy_ddra_streaming = true  -> match old behavior (no post-reduce)
-%                                         = false -> also reduce post-image (recommended)
+function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U, W, M_AB, C, VAL)
+% Streaming DDRA: unified size + containment on the SAME validation points as Gray.
+% VAL must be built by build_validation_bundle().
 
-    % ---- unified reduction order (respects lowmem.cap inside helper) ----
-    K = red_order(C);
+    assert(nargin>=7 && ~isempty(VAL) && isfield(VAL,'y') && isfield(VAL,'u'), ...
+        'ddra_infer_size_streaming: VAL (y,u,...) is required for synchronized validation.');
 
-    % ---- legacy toggle (default = old behavior preserved OFF? keep ON for safety) ----
-    LM = getfielddef(C,'lowmem',struct());
-    legacy_mode = getfielddef(LM,'legacy_ddra_streaming', true);   
+    K   = C.shared.options_reach.zonotopeOrder;   % unified reduction
+    X   = R0;
+    S   = 0;   % size accumulator
+    hit = 0; tot = 0;
 
-    % ---- MC budget ----
-    Nmc = getfielddef(LM,'ddra_mc', getfielddef(C,'mc_batch', 20));  % default 20
-
-    % ---- main loop ----
     n_k_val = C.shared.n_k_val;
-    X = R0;
-    sizeI_ddra = 0;
-    contain = 0; 
-    total   = 0;
+    if isfield(VAL,'n_k'), n_k_val = min(n_k_val, VAL.n_k); end
+
+    % pull output maps; missing -> identity/zero
+    dim_y = size(VAL.y,2);
+    hasC = isfield(VAL,'C') && ~isempty(VAL.C);
+    hasD = isfield(VAL,'D') && ~isempty(VAL.D);
+    if ~hasC, VAL.C = eye(size(sys.A,1), size(sys.A,1)); end
+    if ~hasD, VAL.D = zeros(dim_y, size(sys.B,2)); end
 
     for k = 1:n_k_val
-        % pre-image reduction (unified K)
+        % state set step (pre-reduce -> image -> post-reduce)
         X = reduce(X,'girard',K);
-
-        % affine image with learned tube
         Xnext = M_AB * cartProd(X, U) + W;
+        Xnext = reduce(Xnext,'girard',K);
 
-        % optional post-image reduction:
-        if ~legacy_mode
-            % Only attempt reduce if object supports it
-            try
-                Xnext = reduce(Xnext,'girard',K);
-            catch
-                % some CORA versions may not reduce matZonotopes; safe to skip
-            end
+        % unified size metric in OUTPUT space: size of Y = C*Xnext
+        Yset_base = VAL.C * Xnext;       % matZonotope/zonotope linear map
+        S = S + size_interval_sum(Yset_base);
+
+        % unified containment: y_k^(s) ∈ C Xnext + D u_k^(s)
+        yk = squeeze(VAL.y(k,:,:));      % (dim_y × Sval)
+        uk = squeeze(VAL.u(k,:,:));      % (dim_u × Sval)
+        if isvector(yk), yk = yk(:); end
+        if isvector(uk), uk = uk(:); end
+        Sval = size(yk,2);
+
+        for s = 1:Sval
+            ys = yk(:,s);
+            dus = VAL.D * uk(:,s);
+            % Shift measurement into the frame of Yset_base:
+            % ys ∈ Yset_base + dus   <=>   ys - dus ∈ Yset_base
+            inside = contains_interval(ys - dus, Yset_base, 1e-6);
+            hit = hit + inside;
+            tot = tot + 1;
         end
 
-        % size proxy on the (possibly reduced) set
-        Iv = interval(Xnext);
-        sizeI_ddra = sizeI_ddra + sum(abs(Iv.sup(:) - Iv.inf(:)));
-
-        % on-the-fly MC containment
-        if Nmc > 0
-            for i = 1:Nmc
-                x0 = randPoint(R0); u = randPoint(U); w = randPoint(W);
-                x1 = sys.A*x0 + sys.B*u + w;
-                if fast_contains_zonotope_point(Xnext, x1, 1e-3, 1e-6)
-                    contain = contain + 1;
-                end
-                total = total + 1;
-            end
-        end
-
-        X = Xnext;  % step forward
+        X = Xnext;
     end
 
-    if total > 0
-        contain_pct = 100 * contain / total;
-    else
-        contain_pct = NaN;
-    end
+    sizeI_ddra  = S;
+    contain_pct = 100 * hit / max(1,tot);
 end

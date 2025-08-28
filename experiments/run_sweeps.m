@@ -36,70 +36,52 @@ function SUMMARY = run_sweeps(cfg, grid)
             for n_k = axes.n_k
               for ip = 1:numel(axes.pe)
                 pe = axes.pe{ip};
-
+    
                 % --- instantiate config for this run ---
                 C = baseC;
                 C.shared.n_m = n_m;  C.shared.n_s = n_s;  C.shared.n_k = n_k;
                 C.shared.n_m_val = max(2, min(n_m, getfielddef(baseC.shared, 'n_m_val', 2)));
                 C.shared.n_s_val = n_s;  C.shared.n_k_val = n_k;
-                C.ddra.alpha_w   = alpha_w;               % match noise scale
+                C.ddra.alpha_w   = alpha_w;
                 C.shared.seed    = 1; rng(C.shared.seed, 'twister');
                 if C.shared.dyn == "k-Mass-SD"; C.shared.dyn_p = D; end
-
+    
                 % --- Build true systems ---
                 [sys_cora, sys_ddra, R0, U] = build_true_system(C);
-
+    
                 % ================= DDRA =================
                 t0 = tic;
-                [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys_ddra, R0, U, C, pe);
+                % NOTE: ddra_generate_data must return DATASET as 6th out:
+                % DATASET.x0_blocks{b}, DATASET.u_blocks{b} with block length n_k
+                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys_ddra, R0, U, C, pe);
                 Tlearn = toc(t0);
-
-                % ----------------- NEW -----------------
-                % Split DATASET deterministically into train/val blocks (same cardinalities as before)
-                Mtot = DATASET.n_blocks;
-                Mtr  = C.shared.n_m * C.shared.n_s;    % already equals DATASET.n_blocks (all train)
-                % For a strict split, regenerate a smaller train set & a separate val set,
-                % or just reuse the same generator with n_m_val etc. For now, we’ll build
-                % both from the same DATASET to lock sequences 1:1:
-                
-                TS_train = gray_testSuite_from_dataset(sys_cora, R0, DATASET);
-                
-                C_val = C; 
+    
+                % Build TRAIN and VAL suites deterministically from generator
+                TS_train = local_TS_from_dataset(sys_cora, R0, DATASET, C.shared.n_k);
+    
+                C_val = C;
                 C_val.shared.n_m = C.shared.n_m_val;
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
                 [~,~,~,~,~, DATASET_val] = ddra_generate_data(sys_ddra, R0, U, C_val, pe);
-                TS_val   = gray_testSuite_from_dataset(sys_cora, R0, DATASET_val);
-
+                TS_val   = local_TS_from_dataset(sys_cora, R0, DATASET_val, C_val.shared.n_k);
+    
+                % Learn M_AB
                 t1 = tic;
                 M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
                 Tcheck = toc(t1);
-
-                if LM.store_ddra_sets
-                    t2 = tic;
-                    [Xsets_ddra, sizeI_ddra] = ddra_infer(sys_ddra, R0, U, W, M_AB, C);
-                    Tinfer = toc(t2);
-                    cval_ddra = mc_containment_X(sys_ddra, R0, U, W, Xsets_ddra, C);
-                    clear Xsets_ddra
+    
+                clear Xminus Uminus Xplus  % free data blocks early
+    
+                % ---- unified disturbance policy ----
+                use_noise   = resolve_use_noise(C.shared);
+                if use_noise
+                    W_for_gray = W;
                 else
-                    t2 = tic;
-                    [sizeI_ddra, cval_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W, M_AB, C);
-                    Tinfer = toc(t2);
+                    W_for_gray = zonotope(zeros(size(center(W),1),1));
                 end
-                clear Xminus Uminus Xplus   % free data blocks early
 
                 % ================= GRAY =================
-
-                % ---- unified disturbance policy ----
-                use_noise = resolve_use_noise(C.shared);
-                
-                % W_for_gray: same as DDRA (zero if use_noise=false)
-                W_for_gray = W;
-                if ~use_noise
-                    W_for_gray = zonotope(zeros(size(center(W),1),1));  % zero disturbance
-                end
-                
-                % ================= Start: New Patch =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
                 t3 = tic;
                 configs = gray_identify(sys_cora, R0, U, C, pe, ...
@@ -107,58 +89,63 @@ function SUMMARY = run_sweeps(cfg, grid)
                     'options_testS', optTS, ...
                     'externalTS_train', TS_train);
                 Tlearn_g = toc(t3);
-                
-                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
-                    configs, sys_cora, R0, U, C, pe, ...
-                    'check_contain', LM.gray_check_contain, ...
-                    'externalTS_train', TS_train, ...
-                    'externalTS_val',   TS_val);
-                % ================= End: New Patch =================
-
+    
+                % Build VAL record (x0,u) from TS_val and pass to both sides
+                VAL = local_VAL_from_TS(TS_val);
+    
+                % ---- Gray validation on EXACT same points (contains_interval metric)
+                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL( ...
+                    configs, TS_train, TS_val);  % thin wrapper calling reach() with cs stripped
+    
+                % ---- DDRA inference (stored or streaming) on SAME validation points
+                if LM.store_ddra_sets
+                    t2 = tic;
+                    [Xsets_ddra, sizeI_ddra] = ddra_infer(sys_ddra, R0, U, W_for_gray, M_AB, C);
+                    Tinfer = toc(t2);
+                    % Recompute containment with EXACT VAL points instead of MC
+                    cval_ddra = contains_on_VAL_linear(sys_ddra, W_for_gray, Xsets_ddra, VAL);
+                    clear Xsets_ddra
+                else
+                    t2 = tic;
+                    [sizeI_ddra, cval_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_for_gray, M_AB, C, VAL);
+                    Tinfer = toc(t2);
+                end
+    
+                % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
-                sizeI_gray = gray_infer_size(configs{2}.sys, R0, U, C);
+                sizeI_gray = gray_infer_size_on_VAL(configs{2}.sys, TS_val, C);
                 Tinfer_g   = toc(t4);
-
+    
                 clear configs  % free Gray objects early
-
+    
                 % --- Pack row ---
                 rowi = rowi + 1;
                 row = pack_row(C, D, alpha_w, pe, ...
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
                     Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
-
-                % add PE diagnostics if present
-                row.pe_hankel_rank = getfielddef(Zinfo,'hankel_rank', NaN);
-                row.pe_hankel_full = getfielddef(Zinfo,'hankel_full', false);
-                row.pe_rank_frac   = getfielddef(Zinfo,'rank_frac',   NaN);
-                use_noise = resolve_use_noise(C.shared);
-                row.use_noise = use_noise;   % add to pack_row & header
-
-                % --- Initialize schema on first row & write/accumulate ----
+                row.use_noise = use_noise;
+    
+                % --- Initialize schema & write/accumulate ----
                 if rowi == 1
                     hdr = fieldnames(orderfields(row))';
                     if LM.append_csv
-                        % header once
-                        fid = fopen(csv_path, 'w');
-                        fprintf(fid, '%s\n', strjoin(hdr, ','));
-                        fclose(fid);
+                        fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
                     else
-                        cells = cell(Ntot, numel(hdr));  % fully preallocate
+                        cells = cell(Ntot, numel(hdr));
                     end
                 end
-
+    
                 if LM.append_csv
-                    append_row_csv(csv_path, hdr, row);   % stream to disk
+                    append_row_csv(csv_path, hdr, row);
                 else
                     for j = 1:numel(hdr)
-                        v = row.(hdr{j});
-                        if isstring(v), v = char(v); end
+                        v = row.(hdr{j}); if isstring(v), v = char(v); end
                         cells{rowi, j} = v;
                     end
                 end
-
-                clear M_AB Zinfo sizeI_ddra sizeI_gray
+    
+                clear M_AB Zinfo sizeI_ddra sizeI_gray TS_train TS_val DATASET DATASET_val VAL
               end
             end
           end
@@ -174,5 +161,46 @@ function SUMMARY = run_sweeps(cfg, grid)
         writecell([hdr; cells(1:rowi,:)], csv_path);
         fprintf('Sweeps done. Rows: %d\nCSV -> %s\n', rowi, csv_path);
         SUMMARY = cell2table(cells(1:rowi,:), 'VariableNames', hdr);
+    end
+end
+
+% ------------------- Helpers-------------------
+
+function use_noise = resolve_use_noise(S)
+    % Single switch: default = true unless explicitly disabled
+    if isfield(S,'noise_for_ddra') || isfield(S,'noise_for_gray')
+        % require both ON to be true; any false -> off
+        g = ~isfield(S,'noise_for_gray') || logical(S.noise_for_gray);
+        d = ~isfield(S,'noise_for_ddra') || logical(S.noise_for_ddra);
+        use_noise = g && d;
+    else
+        use_noise = true;
+    end
+end
+
+function TS = local_TS_from_dataset(sys_cora, R0, DATASET, n_k)
+    % Build a cell array of CORA testCase-like structs with fields: y,u,initialState
+    % using the exact (x0,u) blocks recorded in DATASET.
+    % Assumes you already have a simulator that produced y to match your identification code.
+    B = numel(DATASET.x0_blocks);
+    TS = cell(1,B);
+    for b = 1:B
+        obj = struct();
+        obj.initialState = DATASET.x0_blocks{b};              % (dim_x × 1)
+        obj.u            = reshape(DATASET.u_blocks{b}, [], n_k, 1); % (m × n_k × 1)
+        % y is only needed by validate-like plotters; Gray/size code can simulate it
+        obj.y            = nan(n_k, sys_cora.nrOfOutputs, 1);
+        TS{b} = obj;
+    end
+end
+
+function VAL = local_VAL_from_TS(TS_val)
+    % Normalize validation points for “exact same points” containment checks.
+    B = numel(TS_val);
+    VAL = struct('x0',{cell(1,B)}, 'u',{cell(1,B)});
+    for b = 1:B
+        VAL.x0{b} = TS_val{b}.initialState;
+        VAL.u{b}  = squeeze(TS_val{b}.u);  % (m × n_k)
+        if isvector(VAL.u{b}), VAL.u{b} = VAL.u{b}(:)'; end
     end
 end
