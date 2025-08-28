@@ -140,6 +140,11 @@ save_plot(f1, plots_dir, 'pe_fidelity_conservatism', 'Formats', {'png','pdf'}, '
 % === NEW: save the second figure ===
 %save_plot(f2, plots_dir, 'pe_runtime_profiles', 'Formats', {'png','pdf'}, 'Resolution', 200);
 
+C = colorscheme('tum');
+plot_reachsets_2d(configs{2}.sys, sys_ddra, VAL, W_eff, 1, [1 2], ...
+    'Colors', C, 'SaveDir', fullfile('experiments','results','plots','reach'), ...
+    'TikZ', true, 'Name', 'example_block1');
+
 disp('PE sweep done.');
 
 close all force
