@@ -78,6 +78,7 @@ sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;
 sweep_grid.n_k_list      = cfg.shared.n_k;
 PE_orders = [1 2 3 4 5 6 7 8 9 10];
+PE_orders = [1 2];
 sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','randn','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0), ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
@@ -95,7 +96,17 @@ cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metri
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
-cfg.io.save_artifacts = true;  % opt-in: save per-row .mat with everything needed for reachset plotting
+% --- plotting mode + knobs
+cfg.io.plot_mode     = "offline";   % "online" | "offline" | "both"
+cfg.io.make_reach_plot = true;      % online: produce figures during run
+cfg.io.plot_rows       = [1];       % which sweep rows to plot 
+cfg.io.plot_dims       = [1 2];     % output dims
+cfg.io.plot_every_k    = 1;         % plot every k-th step (declutter)
+cfg.io.save_artifacts  = true;      % offline: keep .mat files for peeking/plotting
+
+cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
+cfg.allow_parallel = false;  % keep serial
+
 
 % === NEW: get plots_dir once ===
 [plots_dir, ~] = init_io(cfg);
@@ -142,10 +153,6 @@ save_plot(f1, plots_dir, 'pe_fidelity_conservatism', 'Formats', {'png','pdf'}, '
 % === NEW: save the second figure ===
 %save_plot(f2, plots_dir, 'pe_runtime_profiles', 'Formats', {'png','pdf'}, 'Resolution', 200);
 
-C = colorscheme('tum');
-plot_reachsets_2d(configs{2}.sys, sys_ddra, VAL, W_eff, 1, [1 2], ...
-    'Colors', C, 'SaveDir', fullfile('experiments','results','plots','reach'), ...
-    'TikZ', true, 'Name', 'example_block1');
 
 disp('PE sweep done.');
 

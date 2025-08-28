@@ -1,6 +1,12 @@
 function SUMMARY = run_sweeps(cfg, grid)
 % RUN_SWEEPS  Batch experiments for DDRA vs Gray under controlled sweeps.
 % Produces CSV summary in results_dir and plots in plots_dir (via callers).
+    if ~getfielddef(cfg,'allow_parallel',false)
+        try
+            ps = parallel.Settings; ps.Pool.AutoCreate = false;
+            p = gcp('nocreate'); if ~isempty(p), delete(p); end
+        catch, end
+    end
 
     [plots_dir, results_dir] = init_io(cfg); 
     csv_path = fullfile(results_dir, 'summary.csv');
@@ -137,9 +143,64 @@ function SUMMARY = run_sweeps(cfg, grid)
                     'externalTS_train', TS_train, ...
                     'externalTS_val',   TS_val);  
                 Tlearn_g = toc(t3);
+
+                idxGray = min(2, numel(configs));  % 2 if exists, else 1
     
                 % Build VAL record (x0,u) from TS_val and pass to both sides
                 VAL = local_VAL_from_TS(TS_val, DATASET_val);
+                pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
+                % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
+                row_index = rowi + 1;
+                artdir = fullfile(results_dir, 'artifacts');
+                if ~exist(artdir,'dir'), mkdir(artdir); end
+                
+                % normalize “true” to linearSysDT for consistent on-disk schema
+                sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
+                
+                artifact = struct();
+                artifact.sys_gray = configs{idxGray}.sys;     % RCSI/Gray (linearSysDT)
+                artifact.sys_ddra = sys_true_dt;        % “true” model (linearSysDT)
+                artifact.VAL      = VAL;                % exact (x0,u,y) used on VAL
+                artifact.W_eff    = W_eff;              % effective W used by DDRA
+                artifact.M_AB     = M_AB;               % matrix zonotope for DDRA
+                artifact.meta     = struct( ...
+                    'row', row_index, 'dt', sys_true_dt.dt, ...
+                    'D', D, 'alpha_w', alpha_w, ...
+                    'n_m', C.shared.n_m, 'n_s', C.shared.n_s, 'n_k', C.shared.n_k, ...
+                    'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2 );
+                
+                % include R0/U so the plotter can exactly reproduce reach
+                artifact.VAL.R0 = R0; 
+                artifact.VAL.U  = U;
+                
+                if getfielddef(cfg.io,'save_artifacts',true)
+                    save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), ...
+                         '-struct', 'artifact', '-v7.3');
+                end
+
+                want_online = any(pmode == ["online","both"]) && getfielddef(cfg.io,'make_reach_plot',true);
+                if want_online && ismember(row_index, getfielddef(cfg.io,'plot_rows',[1]))
+                    dims   = getfielddef(cfg.io,'plot_dims',[1 2]);
+                    everyK = getfielddef(cfg.io,'plot_every_k', 1);
+                
+                    sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
+                
+                    if use_noise, W_plot = W_eff; else, W_plot = zonotope(zeros(size(center(W_eff),1),1)); end
+                
+                    reach_dir = fullfile(plots_dir,'reach'); if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
+                    savename = fullfile(reach_dir, sprintf('row_%04d_y%d%d', row_index, dims(1), dims(2)));
+                    optReach  = getfielddef(C.shared,'options_reach', struct());
+                    orderCap  = getfielddef(optReach, 'zonotopeOrder', 100);
+                    plot_reach_all_onepanel(sys_true_dt, configs{idxGray}.sys, VAL, ...
+                        'Block', 1, 'Dims', dims, ...
+                        'MAB',  M_AB, ...
+                        'W',    W_plot, ...
+                        'Every', everyK, ...
+                        'Order', orderCap, ...
+                        'Save',  savename, ...
+                        'ShowSamples', true);
+                end
+
     
                 % ---- Gray validation on EXACT same points (contains_interval metric)
                 [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL(configs, TS_train, TS_val, 1e-6);
@@ -163,7 +224,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 %% Start patch
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
-                sizeI_gray = gray_infer_size_on_VAL(configs{2}.sys, TS_val, C, configs{2}.params);
+                sizeI_gray = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, configs{idxGray}.params);
                 Tinfer_g   = toc(t4);
                 
                 % --- Optional: save plotting artifact for this row ---
@@ -175,7 +236,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     % pack only what plotting needs
                     artifact = struct();
                     if numel(configs) >= 2
-                        artifact.sys_gray = configs{2}.sys;    % identified RCSI/Gray model (CORA linearSysDT)
+                        artifact.sys_gray = configs{idxGray}.sys;    % identified RCSI/Gray model (CORA linearSysDT)
                     else
                         artifact.sys_gray = configs{1}.sys;    % fallback
                     end
@@ -340,10 +401,11 @@ function VAL = local_VAL_from_TS(TS_val, DATASET_val)
         VAL.x0{b} = TS_val{b}.initialState;
 
         % u : (m × n_k)
-        Ui = squeeze(TS_val{b}.u);         % (n_k × m) or (n_k × m × 1)
-        if ndims(TS_val{b}.u) == 3, Ui = squeeze(TS_val{b}.u); end
-        if size(Ui,1) < size(Ui,2), Ui = Ui.'; end    % ensure (m × n_k)
-        VAL.u{b} = Ui;
+        Ui = squeeze(TS_val{b}.u);  % usually (n_k × m)
+        if size(Ui,1) > size(Ui,2)  % more rows than cols -> make it (m × n_k)
+            Ui = Ui.';
+        end
+        VAL.u{b} = Ui;              % now (m × n_k)
 
         % y : prefer DATASET_val if present; otherwise use the TS field
         yi = [];

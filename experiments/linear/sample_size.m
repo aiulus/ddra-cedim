@@ -98,7 +98,7 @@ cfg.shared.use_noise = false;   % or true
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
-sweep_grid.D_list       = [5];
+sweep_grid.D_list       = [2];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = [2 4 8 16 32 64 128];
 sweep_grid.n_m_list = [2 16 32 64];
@@ -113,7 +113,16 @@ cfg.lowmem.store_ddra_sets    = true;   % don’t keep DDRA sets; compute metric
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
-cfg.io.save_artifacts = true;  % opt-in: save per-row .mat with everything needed for reachset plotting
+% --- plotting mode + knobs
+cfg.io.plot_mode     = "offline";   % "online" | "offline" | "both"
+cfg.io.make_reach_plot = true;      % online: produce figures during run
+cfg.io.plot_rows       = [1];       % which sweep rows to plot 
+cfg.io.plot_dims       = [1 2];     % output dims
+cfg.io.plot_every_k    = 1;         % plot every k-th step (declutter)
+cfg.io.save_artifacts  = true;      % offline: keep .mat files for peeking/plotting
+
+cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
+cfg.allow_parallel = false;  % keep serial
 
 %% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);

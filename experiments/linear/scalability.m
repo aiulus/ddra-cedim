@@ -106,7 +106,16 @@ cfg.shared.noise_for_gray = false;   % if false => Gray/RCSI runs with W = 0
 cfg.shared.noise_for_ddra = true;    % DDRA uses W unless this is set to false
 cfg.shared.use_noise = false;   % or true
 
-cfg.io.save_artifacts = true;  % opt-in: save per-row .mat with everything needed for reachset plotting
+% --- plotting mode + knobs
+cfg.io.plot_mode     = "offline";   % "online" | "offline" | "both"
+cfg.io.make_reach_plot = true;      % online: produce figures during run
+cfg.io.plot_rows       = [1];       % which sweep rows to plot 
+cfg.io.plot_dims       = [1 2];     % output dims
+cfg.io.plot_every_k    = 1;         % plot every k-th step (declutter)
+cfg.io.save_artifacts  = true;      % offline: keep .mat files for peeking/plotting
+
+cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
+cfg.allow_parallel = false;  % keep serial
 
 
 % ---------- Run ----------

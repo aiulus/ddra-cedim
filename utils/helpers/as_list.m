@@ -1,0 +1,1 @@
+function L = as_list(v), if isscalar(v), L = v; else, L = v(:)'; end, end
