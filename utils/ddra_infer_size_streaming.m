@@ -1,35 +1,52 @@
 function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U, W, M_AB, C)
-% Like ddra_infer, but never stores Xsets; accumulates size proxy & MC contain on the fly.
-% Uses a fast, LP-free point-in-zonotope tester to avoid polytope blow-ups.
+% Streaming DDRA: size proxy + MC containment, memory friendly.
+% Unified reduction knob via red_order(C), with a legacy switch:
+%   C.lowmem.legacy_ddra_streaming = true  -> match old behavior (no post-reduce)
+%                                         = false -> also reduce post-image (recommended)
 
+    % ---- unified reduction order (respects lowmem.cap inside helper) ----
+    K = red_order(C);
+
+    % ---- legacy toggle (default = old behavior preserved OFF? keep ON for safety) ----
+    LM = getfielddef(C,'lowmem',struct());
+    legacy_mode = getfielddef(LM,'legacy_ddra_streaming', true);   
+
+    % ---- MC budget ----
+    Nmc = getfielddef(LM,'ddra_mc', getfielddef(C,'mc_batch', 20));  % default 20
+
+    % ---- main loop ----
     n_k_val = C.shared.n_k_val;
     X = R0;
     sizeI_ddra = 0;
-    contain = 0; total = 0;
-
-    % MC budget (memory-friendly). Allow override via cfg.lowmem.ddra_mc
-    LM = getfielddef(C,'lowmem',struct());
-    Nmc = getfielddef(LM,'ddra_mc', getfielddef(C,'mc_batch', 20));  % default 20
-
-    % Optional: cap order for stability (only for visualization-size intermediates)
-    ordCap = getfielddef(LM,'zonotopeOrder_cap', ...
-               getfielddef(C.shared.options_reach,'zonotopeOrder',100));
+    contain = 0; 
+    total   = 0;
 
     for k = 1:n_k_val
-        % propagate one step with M_AB
-        X = reduce(X,'girard', min(100, ordCap));
+        % pre-image reduction (unified K)
+        X = reduce(X,'girard',K);
+
+        % affine image with learned tube
         Xnext = M_AB * cartProd(X, U) + W;
 
-        % accumulate interval size proxy
-        Iv = interval(Xnext);                % works for zonotope/matzonotope images
+        % optional post-image reduction:
+        if ~legacy_mode
+            % Only attempt reduce if object supports it
+            try
+                Xnext = reduce(Xnext,'girard',K);
+            catch
+                % some CORA versions may not reduce matZonotopes; safe to skip
+            end
+        end
+
+        % size proxy on the (possibly reduced) set
+        Iv = interval(Xnext);
         sizeI_ddra = sizeI_ddra + sum(abs(Iv.sup(:) - Iv.inf(:)));
 
-        % on-the-fly MC containment (fast, LP-free)
+        % on-the-fly MC containment
         if Nmc > 0
             for i = 1:Nmc
                 x0 = randPoint(R0); u = randPoint(U); w = randPoint(W);
                 x1 = sys.A*x0 + sys.B*u + w;
-
                 if fast_contains_zonotope_point(Xnext, x1, 1e-3, 1e-6)
                     contain = contain + 1;
                 end
@@ -43,31 +60,6 @@ function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U, W, M_
     if total > 0
         contain_pct = 100 * contain / total;
     else
-        contain_pct = NaN;   % MC disabled
+        contain_pct = NaN;
     end
-end
-
-% ---------- helpers ----------
-function inside = fast_contains_zonotope_point(Z, x, tol_coeff, tol_resid)
-% Conservative, LP-free membership test for Z = c + G * B_inf:
-%   Solve xi_hat = pinv(G)*(x-c); accept if ||xi_hat||_inf <= 1+tol and
-%   residual small. This never returns false-positives (only possible false-negatives).
-
-    c = center(Z);
-    G = generators(Z);   % CORA returns [] if no gens
-
-    if isempty(G)
-        inside = (norm(x - c, inf) <= tol_coeff);
-        return
-    end
-
-    rhs = x - c;
-    xi  = pinv(G) * rhs;                 % least-squares coefficients
-    res = norm(G*xi - rhs, 2);           % linear residual
-
-    inside = (max(abs(xi)) <= 1 + tol_coeff) && (res <= tol_resid);
-end
-
-function val = getfielddef(S, fname, defaultVal)
-    if isstruct(S) && isfield(S, fname); val = S.(fname); else; val = defaultVal; end
 end

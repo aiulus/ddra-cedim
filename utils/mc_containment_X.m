@@ -15,20 +15,17 @@ function c_pct = mc_containment_X(sys, R0, U, W, Xsets, C)
 %   - This is a fidelity *proxy*; containment may be slightly optimistic.
 
     % Defaults
-    trials   = getfielddef(C.shared,'mc_trials',50);
-    Ktotal   = numel(Xsets);
-    Kcheck   = min(getfielddef(C.shared,'mc_steps_max',min(10,Ktotal)), Ktotal);
-    ord_cap  = getfielddef(C.shared,'mc_reduce_order',40);
-    tol      = getfielddef(C.shared,'mc_tol',1e-8);
-    method   = getfielddef(C.shared,'mc_method','interval');
+    K = red_order(C);                               % unified
+    trials = getfielddef(C.shared,'mc_trials',50);
+    Ktotal = numel(Xsets);
+    Kcheck = min(getfielddef(C.shared,'mc_steps_max',min(10,Ktotal)), Ktotal);
+    tol    = getfielddef(C.shared,'mc_tol',1e-8);
 
-    % Pre-reduce predicted sets to keep membership cheap
     Zcap = cell(1,Kcheck);
     for k = 1:Kcheck
-        Zk = Xsets{k};
-        if ~isa(Zk,'zonotope'); Zk = zonotope(Zk); end
-        if size(Zk.generators,2) > ord_cap
-            Zk = reduce(Zk,'girard',ord_cap);
+        Zk = Xsets{k}; if ~isa(Zk,'zonotope'); Zk = zonotope(Zk); end
+        if size(Zk.generators,2) > K
+            Zk = reduce(Zk,'girard',K);             
         end
         Zcap{k} = Zk;
     end
