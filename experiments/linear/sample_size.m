@@ -46,7 +46,7 @@ cfg.shared.cs_base = struct( ...
 
 % Data budgets (fixed)
 cfg.shared.n_m = 10;    % input traj count
-cfg.shared.n_s = 20;   % samples per traj
+cfg.shared.n_s = 2;   % samples per traj
 cfg.shared.n_k = 4;    % horizon (train)
 cfg.shared.n_m_val = 2;    % val traj count
 
@@ -78,7 +78,7 @@ cfg.shared.use_noise = false;   % or true
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
-sweep_grid.D_list       = [2];
+sweep_grid.D_list       = [5];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = [2 4 8 16 32 64 128];
 sweep_grid.n_m_list = [2 16 32 64];
