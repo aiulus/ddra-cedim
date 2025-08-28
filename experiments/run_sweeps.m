@@ -68,8 +68,57 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % Learn M_AB
                 t1 = tic;
-                M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
+                try
+                    % New signature with ridge control & W_eff (possibly inflated for ridge)
+                    [M_AB, ridgeInfo, W_eff] = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra, C);
+                catch
+                    % Old signature fallback (keeps older ddra_learn_Mab working)
+                    M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
+                    ridgeInfo = struct('used', false, 'skipped', false, ...
+                                       'lambda', 0, 'kappa', NaN, 'policy', "none");
+                    W_eff = W;  % no inflation in legacy path
+                end
                 Tcheck = toc(t1);
+                
+                % If rank-deficient and allow_ridge = false, skip this sweep point
+                if isfield(ridgeInfo,'skipped') && ridgeInfo.skipped
+                    rowi = rowi + 1;
+                    row = pack_row(C, D, alpha_w, pe, ...
+                        NaN, NaN, NaN, NaN, NaN, ...
+                        Zinfo.rankZ, Zinfo.condZ, ...
+                        Tlearn, Tcheck, NaN, NaN, NaN, NaN);
+                    row.skipped        = true;
+                    row.ddra_ridge     = false;
+                    row.ddra_lambda    = 0;
+                    row.ddra_kappa     = NaN;
+                    row.ddra_ridge_policy = "skip";
+                    row.use_noise      = use_noise;
+                
+                    % --- write row (unchanged from your code) ---
+                    if rowi == 1
+                        hdr = fieldnames(orderfields(row))';
+                        if LM.append_csv
+                            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
+                        else
+                            cells = cell(Ntot, numel(hdr));
+                        end
+                    end
+                    if LM.append_csv
+                        append_row_csv(csv_path, hdr, row);
+                    else
+                        for j = 1:numel(hdr)
+                            v = row.(hdr{j}); if isstring(v), v = char(v); end
+                            cells{rowi, j} = v;
+                        end
+                    end
+                
+                    % Skip inference (and optionally Gray) to keep grid aligned
+                    clear Xminus Uminus Xplus TS_train TS_val DATASET DATASET_val
+                    continue;
+                end
+                
+                clear Xminus Uminus Xplus  % free data blocks early
+
     
                 clear Xminus Uminus Xplus  % free data blocks early
     
@@ -100,14 +149,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % ---- DDRA inference (stored or streaming) on SAME validation points
                 if LM.store_ddra_sets
                     t2 = tic;
-                    [Xsets_ddra, sizeI_ddra] = ddra_infer(sys_ddra, R0, U, W_for_gray, M_AB, C);
+                    [Xsets_ddra, sizeI_ddra] = ddra_infer(sys_ddra, R0, U, W_eff, M_AB, C);
                     Tinfer = toc(t2);
                     % Recompute containment with EXACT VAL points instead of MC
-                    cval_ddra = contains_on_VAL_linear(sys_ddra, W_for_gray, Xsets_ddra, VAL);
+                    cval_ddra = contains_on_VAL_linear(sys_ddra, W_eff, Xsets_ddra, VAL);
                     clear Xsets_ddra
                 else
                     t2 = tic;
-                    [sizeI_ddra, cval_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_for_gray, M_AB, C, VAL);
+                    [sizeI_ddra, cval_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_eff, M_AB, C, VAL);
                     Tinfer = toc(t2);
                 end
     
@@ -125,6 +174,11 @@ function SUMMARY = run_sweeps(cfg, grid)
                     Zinfo.rankZ, Zinfo.condZ, ...
                     Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
                 row.use_noise = use_noise;
+                row.ddra_ridge       = ridgeInfo.used;
+                row.ddra_lambda      = ridgeInfo.lambda;
+                row.ddra_kappa       = ridgeInfo.kappa;
+                row.ddra_ridge_policy= char(ridgeInfo.policy);
+
     
                 % --- Initialize schema & write/accumulate ----
                 if rowi == 1

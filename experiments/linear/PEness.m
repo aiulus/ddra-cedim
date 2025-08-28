@@ -40,6 +40,11 @@ cfg.shared.n_k_val = cfg.shared.n_k;
 
 % DDRA noise
 cfg.ddra = struct('eta_w',1,'alpha_w',0.01);
+% --- DDRA ridge guard (defaults) ---
+cfg.ddra.allow_ridge   = false;   % if false and rank-deficient -> skip point
+cfg.ddra.lambda        = 1e-8;    % ridge lambda when allowed
+cfg.ddra.ridge_gamma   = 1.0;     % scale for added uncertainty
+cfg.ddra.ridge_policy  = "MAB";   % "MAB" (add generator to M_AB) or "W" (inflate W)
 
 % Gray
 cfg.gray = struct('methodsGray', ["graySeq"]);
