@@ -69,8 +69,8 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0
         end
 
         % Map temporal bases to input space with Leff directions
-        if isa(U,'zonotope') && ~isempty(U.generators)
-            GU = U.generators;                          % (n_u × eta_u)
+        if isa(U,'zonotope') && ~isempty(U.G)
+            GU = U.G;                          % (n_u × eta_u)
             if size(GU,2) >= Leff
                 V = GU(:,1:Leff);
             else
@@ -162,21 +162,41 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0
 
     % ------------------ NEW: DATASET ------------------
     % If sys has outputs (C,D), generate y; else y = x for convenience.
-    if isprop(sys,'C') && ~isempty(sys.C)
-        Cmat = sys.C; Dmat = sys.D; ny = size(Cmat,1);
+    Cmat = [];
+    Dmat = [];
+    try
+        % Struct path
+        if isstruct(sys)
+            if isfield(sys,'C'), Cmat = sys.C; end
+            if isfield(sys,'D'), Dmat = sys.D; end
+        else
+            % Object path (CORA classes, ss/dss, etc.)
+            Cmat = sys.C;  
+            Dmat = sys.D;  
+        end
+    catch
+        Cmat = []; Dmat = [];
+    end
+    
+    if ~isempty(Cmat)
+        ny = size(Cmat,1);
         Y_blocks = zeros(ny, n_k, Mtot);
         for i = 1:Mtot
-            % outputs at steps 1..n_k correspond to states X_blocks(:,2..n_k+1)
             for t = 1:n_k
                 x_t = X_blocks(:,t+1,i);
                 u_t = U_blocks(:,t,i);
-                Y_blocks(:,t,i) = Cmat*x_t + Dmat*u_t;
+                if isempty(Dmat)
+                    Y_blocks(:,t,i) = Cmat*x_t;
+                else
+                    Y_blocks(:,t,i) = Cmat*x_t + Dmat*u_t;
+                end
             end
         end
     else
         ny = dim_x;
-        Y_blocks = X_blocks(:,2:end,:);   % identity output
+        Y_blocks = X_blocks(:,2:end,:);   
     end
+
 
     % Shapes chosen to map 1:1 into validateReach expectations:
     %  - per testcase: u (n_k x n_u), y (n_k x ny x 1), initialState (dim_x x 1)

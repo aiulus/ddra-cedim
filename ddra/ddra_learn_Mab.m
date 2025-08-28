@@ -21,7 +21,7 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
 
     % Subtract center, keep generators
     X1W_center = Xplus - Mw.center;
-    X1W        = matZonotope(X1W_center, Mw.generator);
+    X1W        = matZonotope(X1W_center, Mw.G);
 
     % Regressor
     Z        = [Xminus; Uminus];
@@ -64,10 +64,10 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
                 dim_x   = size(sys.A,1);
                 dim_col = size(sys.A,2) + size(sys.B,2);
                 Gr      = eps_scale * ones(dim_x, dim_col);
-                if isempty(M_AB.generator)
+                if isempty(M_AB.G)
                     G3 = Gr;              % (dim_x x dim_col) -> treated as one slice
                 else
-                    G3 = cat(3, M_AB.generator, Gr);
+                    G3 = cat(3, M_AB.G, Gr);
                 end
                 M_AB = matZonotope(M_AB.center, G3);
 
@@ -85,7 +85,7 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
                 % Rebuild Mw and X1W with inflated W
                 Mw2 = build_Mw_matrix_zonotope(W_out, size(sys.A,1), size(Xplus,2));
                 X1W2_center = Xplus - Mw2.center;
-                X1W2        = matZonotope(X1W2_center, Mw2.generator);
+                X1W2        = matZonotope(X1W2_center, Mw2.G);
                 M_AB        = X1W2 * (Zpinv_ridge');
 
             otherwise
@@ -93,10 +93,10 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
                 dim_x  = size(sys.A,1);
                 dim_col = size(sys.A,2) + size(sys.B,2);
                 Gr     = eps_scale * ones(dim_x, dim_col);
-                if isempty(M_AB.generator)
+                if isempty(M_AB.G)
                     G3 = Gr;
                 else
-                    G3 = cat(3, M_AB.generator, Gr);
+                    G3 = cat(3, M_AB.G, Gr);
                 end
                 M_AB = matZonotope(M_AB.center, G3);
         end

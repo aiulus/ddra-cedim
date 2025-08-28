@@ -48,6 +48,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % --- Build true systems ---
                 [sys_cora, sys_ddra, R0, U] = build_true_system(C);
+                use_noise   = resolve_use_noise(C.shared);
     
                 % ================= DDRA =================
                 t0 = tic;
@@ -94,7 +95,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     row.ddra_ridge_policy = "skip";
                     row.use_noise      = use_noise;
                 
-                    % --- write row (unchanged from your code) ---
+                    % --- write row ---
                     if rowi == 1
                         hdr = fieldnames(orderfields(row))';
                         if LM.append_csv
@@ -120,10 +121,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 clear Xminus Uminus Xplus  % free data blocks early
 
     
-                clear Xminus Uminus Xplus  % free data blocks early
-    
-                % ---- unified disturbance policy ----
-                use_noise   = resolve_use_noise(C.shared);
+                % ---- unified disturbance policy ----               
                 if use_noise
                     W_for_gray = W;
                 else
@@ -143,8 +141,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 VAL = local_VAL_from_TS(TS_val);
     
                 % ---- Gray validation on EXACT same points (contains_interval metric)
-                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL( ...
-                    configs, TS_train, TS_val);  % thin wrapper calling reach() with cs stripped
+                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL(configs, TS_train, TS_val, 1e-6);
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
                 if LM.store_ddra_sets
@@ -162,7 +159,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
-                sizeI_gray = gray_infer_size_on_VAL(configs{2}.sys, TS_val, C);
+                sizeI_gray = gray_infer_size_on_VAL(configs{2}.sys, TS_val, C, configs{2}.params);
                 Tinfer_g   = toc(t4);
     
                 clear configs  % free Gray objects early
@@ -232,29 +229,74 @@ function use_noise = resolve_use_noise(S)
     end
 end
 
-function TS = local_TS_from_dataset(sys_cora, R0, DATASET, n_k)
-    % Build a cell array of CORA testCase-like structs with fields: y,u,initialState
-    % using the exact (x0,u) blocks recorded in DATASET.
-    % Assumes you already have a simulator that produced y to match your identification code.
-    B = numel(DATASET.x0_blocks);
-    TS = cell(1,B);
-    for b = 1:B
-        obj = struct();
-        obj.initialState = DATASET.x0_blocks{b};              % (dim_x × 1)
-        obj.u            = reshape(DATASET.u_blocks{b}, [], n_k, 1); % (m × n_k × 1)
-        % y is only needed by validate-like plotters; Gray/size code can simulate it
-        obj.y            = nan(n_k, sys_cora.nrOfOutputs, 1);
-        TS{b} = obj;
+function TS = local_TS_from_dataset(sys_cora, ~, DATASET, n_k_override)
+% Build CORA testCase objects from DATASET.
+% Accepts BOTH new (x0_list/U_blocks/Y_blocks) and old (x0_blocks/u_blocks) layouts.
+
+    % --- detect layout & define accessors ---
+    if isfield(DATASET,'x0_list') && isfield(DATASET,'U_blocks')
+        M       = size(DATASET.x0_list, 2);
+        get_x0  = @(b) DATASET.x0_list(:, b);              % (n_x×1)
+        get_U   = @(b) DATASET.U_blocks(:, :, b);          % (n_u×n_k)
+        have_Y  = isfield(DATASET,'Y_blocks');
+        if have_Y, get_Y = @(b) DATASET.Y_blocks(:, :, b); % (n_y×n_k)
+        end
+        n_k_ds  = size(DATASET.U_blocks, 2);
+    elseif isfield(DATASET,'x0_blocks') && isfield(DATASET,'u_blocks')
+        M       = numel(DATASET.x0_blocks);
+        get_x0  = @(b) DATASET.x0_blocks{b};               % (n_x×1)
+        get_U   = @(b) DATASET.u_blocks{b};                % (n_u×n_k)
+        have_Y  = false;
+        n_k_ds  = size(get_U(1), 2);
+    else
+        error('local_TS_from_dataset: DATASET missing x0/U fields.');
+    end
+
+    % --- pick horizon ---
+    if nargin >= 4 && ~isempty(n_k_override)
+        n_k = n_k_override;
+    else
+        n_k = n_k_ds;
+    end
+
+    % --- construct testCase objects ---
+    ny  = sys_cora.nrOfOutputs;
+    TS  = cell(1, M);
+    for b = 1:M
+        x0   = get_x0(b);         % (n_x×1)
+        Ublk = get_U(b);          % (n_u×n_k)
+
+        % match requested horizon by crop/pad (rare)
+        if size(Ublk,2) > n_k, Ublk = Ublk(:,1:n_k); end
+        if size(Ublk,2) < n_k, Ublk = [Ublk, zeros(size(Ublk,1), n_k-size(Ublk,2))]; end
+
+        % CORA testCase expects time-major u: (a×p×s) = (n_k × n_u × 1)
+        u_tc = reshape(Ublk.', n_k, size(Ublk,1), 1);
+
+        % Measured outputs y: (a×q×s) = (n_k × n_y × 1)
+        if have_Y
+            Yblk = get_Y(b);            % (n_y×n_k)
+            y_tc = reshape(Yblk.', n_k, ny, 1);
+        else
+            % Fallback: if DATASET has no Y, hand in NaNs (RCSI can still reach/compare)
+            y_tc = nan(n_k, ny, 1);
+        end
+
+        % Create the actual CORA testCase object
+        TS{b} = testCase(y_tc, u_tc, x0, sys_cora.dt, class(sys_cora));
     end
 end
 
-function VAL = local_VAL_from_TS(TS_val)
-    % Normalize validation points for “exact same points” containment checks.
+function VAL = local_VAL_from_TS(TS_val, DATASET_val)
     B = numel(TS_val);
-    VAL = struct('x0',{cell(1,B)}, 'u',{cell(1,B)});
+    VAL = struct('x0',{cell(1,B)}, 'u',{cell(1,B)}, 'w',{cell(1,B)});
     for b = 1:B
         VAL.x0{b} = TS_val{b}.initialState;
-        VAL.u{b}  = squeeze(TS_val{b}.u);  % (m × n_k)
+        VAL.u{b}  = squeeze(TS_val{b}.u);
         if isvector(VAL.u{b}), VAL.u{b} = VAL.u{b}(:)'; end
+        % exact disturbances if available
+        if nargin >= 2 && ~isempty(DATASET_val) && isfield(DATASET_val,'W_blocks')
+            VAL.w{b} = DATASET_val.W_blocks(:,:,b);
+        end
     end
 end
