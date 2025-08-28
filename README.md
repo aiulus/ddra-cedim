@@ -104,7 +104,6 @@ Per sweep point:
 * **Conservatism**: `sizeI_gray`, `sizeI_ddra` (aggregated output interval width).
 * **Runtime**: `t_*` fields: learn / check (validation) / infer, plus totals (see `ensure_time_totals`).
 * **Diagnostics**: `rankZ`, `condZ`, PE labels (`pe_mode`, `pe_order`), `use_noise`.
-* **Ridge guard**: `ddra_ridge`, `ddra_lambda`, `ddra_kappa`, `ddra_ridge_policy`, and `skipped` if we refused ridge and Z was rank-deficient.
 
 ## Script-specific notes
 
