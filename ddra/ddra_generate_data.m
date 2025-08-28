@@ -24,9 +24,16 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0
     n_u   = size(sys.B,2);
 
     % Disturbance set W
-    eta_w = getfielddef(C.ddra,'eta_w',1);
+    eta_w   = getfielddef(C.ddra,'eta_w',1);
     alpha_w = getfielddef(C.ddra,'alpha_w',0);
     W = zonotope(zeros(dim_x,1), alpha_w * ones(dim_x, max(1,eta_w)));
+    
+    % NEW: global noise switch
+    use_noise = resolve_use_noise(C.shared);
+    if ~use_noise
+        % hard zero: no generators, zero center
+        W = zonotope(zeros(dim_x,1));  
+    end
 
     % PE defaults
     if nargin < 5 || isempty(pe)

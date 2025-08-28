@@ -90,10 +90,13 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 % ================= GRAY =================
 
-                % Force W=0 for Gray/RCSI if requested (keeps fair comparison when not studying noise)
+                % ---- unified disturbance policy ----
+                use_noise = resolve_use_noise(C.shared);
+                
+                % W_for_gray: same as DDRA (zero if use_noise=false)
                 W_for_gray = W;
-                if isfield(C.shared,'noise_for_gray') && ~C.shared.noise_for_gray
-                    W_for_gray = zonotope(zeros(size(center(W),1),1)); % zero disturbance
+                if ~use_noise
+                    W_for_gray = zonotope(zeros(size(center(W),1),1));  % zero disturbance
                 end
                 
                 % ================= Start: New Patch =================
@@ -129,6 +132,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 row.pe_hankel_rank = getfielddef(Zinfo,'hankel_rank', NaN);
                 row.pe_hankel_full = getfielddef(Zinfo,'hankel_full', false);
                 row.pe_rank_frac   = getfielddef(Zinfo,'rank_frac',   NaN);
+                use_noise = resolve_use_noise(C.shared);
+                row.use_noise = use_noise;   % add to pack_row & header
 
                 % --- Initialize schema on first row & write/accumulate ----
                 if rowi == 1
