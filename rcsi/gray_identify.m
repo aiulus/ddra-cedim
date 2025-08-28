@@ -10,7 +10,11 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     p = inputParser;
     addParameter(p,'overrideW',[]);
     addParameter(p,'options_testS',[]);
+    addParameter(p,'externalTS_train',[]);
+    addParameter(p,'externalTS_val',[]);
     parse(p,varargin{:});
+    TS_train_ext = p.Results.externalTS_train;
+    TS_val_ext   = p.Results.externalTS_val;
     W_override = p.Results.overrideW;
     optTS_in   = p.Results.options_testS;
 
@@ -46,11 +50,16 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
 
     % ---- params_true (kept for configs{1}) + identification suite ----
     params_true = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k-1));
-    params_true.testSuite = createTestSuite(sys_cora, params_true, ...
-        C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
-    if ~isempty(W_override)
-        params_true.W = W_override;  % if conform() reads params.W
+
+    if ~isempty(TS_train_ext)
+        % Use *your* sequences (locked with DDRA)
+        params_true.testSuite = TS_train_ext;
+    else
+        % Fallback to CORA-generated suite
+        params_true.testSuite = createTestSuite(sys_cora, params_true, ...
+            C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
     end
+    
 
     % ---- CORA-style initial estimates (identity generators) ----
     c_R0 = zeros(sys_cora.nrOfDims,1);
@@ -58,9 +67,18 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     params_id_init = params_true;
     params_id_init.R0 = zonotope([c_R0, eye(sys_cora.nrOfDims)]);
     params_id_init.U  = zonotope([c_U,  eye(sys_cora.nrOfInputs)]);
-    if ~isempty(W_override)
-        params_id_init.W = W_override;
+
+    if ~isempty(W_override) && hasGenerators(W_override)
+        % augment the system to expose w as extra input channels
+        % fold W into U so CORA sees one combined input set 
+        U_aug = cartProd(U, W_override);
+        params_true.U   = U_aug;
+        params_id_init.U = zonotope([center(U_aug), eye(dim(U_aug))]);
     end
+    
+    % To include additional measurement noise V:
+    % sys_cora = augment_u_with_v(sys_cora); U_aug = cartProd(U_aug_or_U, V);
+
 
     % ---- conformance options ----
     options = C.shared.options_reach;

@@ -1,4 +1,4 @@
-function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, pe)
+function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0, U, C, pe)
 %DDRA_GENERATE_DATA  Build (X^-, U^-, X^+) blocks and disturbance set W.
 % Adds PE-driven nominal inputs (randn or sin) with optional randomness
 % around the nominal (via U), and reports PE diagnostics in Zinfo.
@@ -45,7 +45,7 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     Leff      = Leff_time;
 
     for m = 1:n_m
-        if det, rng(1000+m,'twister'); end
+        % if det, rng(1000+m,'twister'); end
 
         % Temporal basis S (Leff × n_k)
         switch mode
@@ -96,20 +96,32 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     Uminus = zeros(n_u,  N);
     Xplus  = zeros(dim_x, N);
 
-    col = 0;
+    % ------------------ NEW: DATASET ------------------
+    Mtot = n_m * n_s;
+    x0_list   = zeros(dim_x, Mtot);
+    U_blocks  = zeros(n_u, n_k, Mtot);
+    W_blocks  = zeros(dim_x, n_k, Mtot);
+    X_blocks  = zeros(dim_x, n_k+1, Mtot);   % includes x0 in slot 1
+
+    col = 0; msi = 0;
     for m = 1:n_m
-        U_nom = U_nom_all{m}; % (n_u × n_k), reuse across samples s
+        U_nom = U_nom_all{m}; % (n_u × n_k)
 
         for s = 1:n_s
+            msi = msi + 1;
+
             % Perturb nominal with a sample from U (per step)
             if rand < p_extr
-                U_pert = U_nom + randPoint(U, n_k, 'extreme'); % (n_u × n_k)
+                U_pert = U_nom + randPoint(U, n_k, 'extreme');
             else
-                U_pert = U_nom + randPoint(U, n_k);            % (n_u × n_k)
+                U_pert = U_nom + randPoint(U, n_k);
             end
 
-            % Simulate this block
+            % Simulate this block and capture everything
             x = randPoint(R0);
+            x0_list(:,msi) = x;
+            X_blocks(:,1,msi) = x;
+
             for t = 1:n_k
                 col = col + 1;
                 Xminus(:,col) = x;
@@ -118,10 +130,14 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
                 Uminus(:,col) = u;
 
                 w = randPoint(W);
-                x = sys.A*x + sys.B*u + w;
+                W_blocks(:,t,msi) = w;
 
+                x = sys.A*x + sys.B*u + w;
                 Xplus(:,col) = x;
+                X_blocks(:,t+1,msi) = x; 
             end
+
+            U_blocks(:,:,msi) = U_pert;
         end
     end
 
@@ -136,6 +152,38 @@ function [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys, R0, U, C, p
     Zinfo.hankel_rank= hrank;
     Zinfo.hankel_full= hfull;
     Zinfo.rank_frac  = rfrac;
+
+    % ------------------ NEW: DATASET ------------------
+    % If sys has outputs (C,D), generate y; else y = x for convenience.
+    if isprop(sys,'C') && ~isempty(sys.C)
+        Cmat = sys.C; Dmat = sys.D; ny = size(Cmat,1);
+        Y_blocks = zeros(ny, n_k, Mtot);
+        for i = 1:Mtot
+            % outputs at steps 1..n_k correspond to states X_blocks(:,2..n_k+1)
+            for t = 1:n_k
+                x_t = X_blocks(:,t+1,i);
+                u_t = U_blocks(:,t,i);
+                Y_blocks(:,t,i) = Cmat*x_t + Dmat*u_t;
+            end
+        end
+    else
+        ny = dim_x;
+        Y_blocks = X_blocks(:,2:end,:);   % identity output
+    end
+
+    % Shapes chosen to map 1:1 into validateReach expectations:
+    %  - per testcase: u (n_k x n_u), y (n_k x ny x 1), initialState (dim_x x 1)
+    DATASET = struct();
+    DATASET.dim_x    = dim_x;
+    DATASET.n_u      = n_u;
+    DATASET.n_y      = ny;
+    DATASET.n_k      = n_k;
+    DATASET.n_blocks = Mtot;
+    DATASET.x0_list  = x0_list;                 % (dim_x x Mtot)
+    DATASET.U_blocks = U_blocks;                % (n_u x n_k x Mtot)
+    DATASET.W_blocks = W_blocks;                % (dim_x x n_k x Mtot)
+    DATASET.X_blocks = X_blocks;                % (dim_x x (n_k+1) x Mtot)
+    DATASET.Y_blocks = Y_blocks;                % (ny    x n_k     x Mtot)
 end
 
 % =================== helpers ===================

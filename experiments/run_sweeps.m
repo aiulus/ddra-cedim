@@ -54,6 +54,23 @@ function SUMMARY = run_sweeps(cfg, grid)
                 [Xminus, Uminus, Xplus, W, Zinfo] = ddra_generate_data(sys_ddra, R0, U, C, pe);
                 Tlearn = toc(t0);
 
+                % ----------------- NEW -----------------
+                % Split DATASET deterministically into train/val blocks (same cardinalities as before)
+                Mtot = DATASET.n_blocks;
+                Mtr  = C.shared.n_m * C.shared.n_s;    % already equals DATASET.n_blocks (all train)
+                % For a strict split, regenerate a smaller train set & a separate val set,
+                % or just reuse the same generator with n_m_val etc. For now, we’ll build
+                % both from the same DATASET to lock sequences 1:1:
+                
+                TS_train = gray_testSuite_from_dataset(sys_cora, R0, DATASET);
+                
+                C_val = C; 
+                C_val.shared.n_m = C.shared.n_m_val;
+                C_val.shared.n_s = C.shared.n_s_val;
+                C_val.shared.n_k = C.shared.n_k_val;
+                [~,~,~,~,~, DATASET_val] = ddra_generate_data(sys_ddra, R0, U, C_val, pe);
+                TS_val   = gray_testSuite_from_dataset(sys_cora, R0, DATASET_val);
+
                 t1 = tic;
                 M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
                 Tcheck = toc(t1);
@@ -73,25 +90,27 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 % ================= GRAY =================
 
-                % ================= Start: New Patch =================
                 % Force W=0 for Gray/RCSI if requested (keeps fair comparison when not studying noise)
                 W_for_gray = W;
                 if isfield(C.shared,'noise_for_gray') && ~C.shared.noise_for_gray
                     W_for_gray = zonotope(zeros(size(center(W),1),1)); % zero disturbance
                 end
+                
+                % ================= Start: New Patch =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
                 t3 = tic;
-                %configs = gray_identify_noiseMatched(sys_cora, R0, U, C, pe, 'overrideW', W_for_gray);
-                configs = gray_identify(sys_cora, R0, U, C, pe, 'options_testS', optTS);
+                configs = gray_identify(sys_cora, R0, U, C, pe, ...
+                    'overrideW', W_for_gray, ...
+                    'options_testS', optTS, ...
+                    'externalTS_train', TS_train);
                 Tlearn_g = toc(t3);
-                % ================= End: New Patch =================
-
-                %t3 = tic;
-                %configs  = gray_identify(sys_cora, R0, U, C, pe);
-                %Tlearn_g = toc(t3);
-
+                
                 [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
-                    configs, sys_cora, R0, U, C, pe, 'check_contain', LM.gray_check_contain);
+                    configs, sys_cora, R0, U, C, pe, ...
+                    'check_contain', LM.gray_check_contain, ...
+                    'externalTS_train', TS_train, ...
+                    'externalTS_val',   TS_val);
+                % ================= End: New Patch =================
 
                 t4 = tic;
                 sizeI_gray = gray_infer_size(configs{2}.sys, R0, U, C);
