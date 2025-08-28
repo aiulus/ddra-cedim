@@ -15,7 +15,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     optTS_in   = p.Results.options_testS;
 
     % ---- build/choose test-suite options (use same PE as DDRA) ----
-    optTS_auto = ts_options_from_pe(C, pe, sys_cora);    % your helper
+    optTS_auto = ts_options_from_pe(C, pe, sys_cora);    
     optTS_auto.stateSet = R0;
     if isempty(optTS_in)
         optTS = optTS_auto;
@@ -24,7 +24,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
         if ~isfield(optTS,'stateSet'), optTS.stateSet = R0; end
     end
 
-    % ---- optional wrapper hook (kept for backward-compat; safe no-op) ----
+    % ---- optional wrapper hook ----
     try
         LM = C.lowmem; 
         ccflag = true; 
@@ -39,7 +39,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
                         'n_m_val',C.shared.n_m_val,'n_s_val',C.shared.n_s_val,'n_k_val',C.shared.n_k_val, ...
                         'methodsGray', C.gray.methodsGray, ...
                         'constraints', C.shared.cs_base.constraints);
-        conformance_gray(lookup, conf_opts); %#ok<NASGU>
+        conformance_gray(lookup, conf_opts); 
     catch
         % wrapper absent / different API -> ignore
     end
@@ -66,7 +66,6 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     options = C.shared.options_reach;
     options.cs = C.shared.cs_base;
 
-    % retain your parameterization hook only if available
     if exist('aux_set_p_gray','file') == 2
         options.cs.set_p = @(p,params) aux_set_p_gray(p, params, C.shared.dyn, sys_cora);
         options.cs.p0    = 0.01*randn(sys_cora.nrOfInputs,1);

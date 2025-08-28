@@ -17,7 +17,7 @@ function optTS = ts_options_from_pe(C, pe, ~)
         m = lower(char(pe.mode));
         switch m
             case {'randn','rand'}
-                mode = 'rand';
+                mode = 'randn';
             case {'sin','sinwave','sine'}
                 mode = 'sin';
             % add other mappings here if you introduce new PE modes:
