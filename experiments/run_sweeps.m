@@ -64,14 +64,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                 Tlearn = toc(t0);
     
                 % Build TRAIN and VAL suites deterministically from generator
-                TS_train = local_TS_from_dataset(sys_cora, R0, DATASET, C.shared.n_k);
+                TS_train = testSuite_fromDDRA(sys_cora, R0, DATASET, C.shared.n_k);
     
                 C_val = C;
                 C_val.shared.n_m = C.shared.n_m_val;
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
                 [~,~,~,~,~, DATASET_val] = ddra_generate_data(sys_ddra, R0, U, C_val, pe);
-                TS_val   = local_TS_from_dataset(sys_cora, R0, DATASET_val, C_val.shared.n_k);
+                TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k);
     
                 % Learn M_AB
                 t1 = tic;
@@ -147,7 +147,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 idxGray = min(2, numel(configs));  % 2 if exists, else 1
     
                 % Build VAL record (x0,u) from TS_val and pass to both sides
-                VAL = local_VAL_from_TS(TS_val, DATASET_val);
+                VAL = VAL_from_TS(TS_val, DATASET_val);
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
                 % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
                 row_index = rowi + 1;
@@ -328,103 +328,4 @@ function use_noise = resolve_use_noise(S)
     end
 end
 
-function TS = local_TS_from_dataset(sys_cora, ~, DATASET, n_k_override)
-% Build CORA testCase objects from DATASET.
-% Accepts BOTH new (x0_list/U_blocks/Y_blocks) and old (x0_blocks/u_blocks) layouts.
 
-    % --- detect layout & define accessors ---
-    if isfield(DATASET,'x0_list') && isfield(DATASET,'U_blocks')
-        M       = size(DATASET.x0_list, 2);
-        get_x0  = @(b) DATASET.x0_list(:, b);              % (n_x×1)
-        get_U   = @(b) DATASET.U_blocks(:, :, b);          % (n_u×n_k)
-        have_Y  = isfield(DATASET,'Y_blocks');
-        if have_Y, get_Y = @(b) DATASET.Y_blocks(:, :, b); % (n_y×n_k)
-        end
-        n_k_ds  = size(DATASET.U_blocks, 2);
-    elseif isfield(DATASET,'x0_blocks') && isfield(DATASET,'u_blocks')
-        M       = numel(DATASET.x0_blocks);
-        get_x0  = @(b) DATASET.x0_blocks{b};               % (n_x×1)
-        get_U   = @(b) DATASET.u_blocks{b};                % (n_u×n_k)
-        have_Y  = false;
-        n_k_ds  = size(get_U(1), 2);
-    else
-        error('local_TS_from_dataset: DATASET missing x0/U fields.');
-    end
-
-    % --- pick horizon ---
-    if nargin >= 4 && ~isempty(n_k_override)
-        n_k = n_k_override;
-    else
-        n_k = n_k_ds;
-    end
-
-    % --- construct testCase objects ---
-    ny  = sys_cora.nrOfOutputs;
-    TS  = cell(1, M);
-    for b = 1:M
-        x0   = get_x0(b);         % (n_x×1)
-        Ublk = get_U(b);          % (n_u×n_k)
-
-        % match requested horizon by crop/pad (rare)
-        if size(Ublk,2) > n_k, Ublk = Ublk(:,1:n_k); end
-        if size(Ublk,2) < n_k, Ublk = [Ublk, zeros(size(Ublk,1), n_k-size(Ublk,2))]; end
-
-        % CORA testCase expects time-major u: (a×p×s) = (n_k × n_u × 1)
-        u_tc = reshape(Ublk.', n_k, size(Ublk,1), 1);
-
-        % Measured outputs y: (a×q×s) = (n_k × n_y × 1)
-        if have_Y
-            %Yblk = get_Y(b);            % (n_y×n_k)
-            %y_tc = reshape(Yblk.', n_k, ny, 1);
-            y_tc = permute(DATASET.Y_blocks(:,:,b), [2 1 3]);
-        else
-            % Fallback: if DATASET has no Y, hand in NaNs (RCSI can still reach/compare)
-            %y_tc = nan(n_k, ny, 1);
-            y_tc = nan(n_k, ny, 1);
-        end
-
-        % Create the actual CORA testCase object
-        TS{b} = testCase(y_tc, u_tc, x0, sys_cora.dt, class(sys_cora));
-    end
-end
-
-function VAL = local_VAL_from_TS(TS_val, DATASET_val)
-    % Build synchronized validation record for EXACT (x0,u,y[,w]) points.
-
-    B = numel(TS_val);
-    VAL = struct('x0',{cell(1,B)}, 'u',{cell(1,B)}, 'y',{cell(1,B)}, 'w',{cell(1,B)});
-
-    have_DS = (nargin >= 2) && ~isempty(DATASET_val);
-
-    for b = 1:B
-        % x0
-        VAL.x0{b} = TS_val{b}.initialState;
-
-        % u : (m × n_k)
-        Ui = squeeze(TS_val{b}.u);  % usually (n_k × m)
-        if size(Ui,1) > size(Ui,2)  % more rows than cols -> make it (m × n_k)
-            Ui = Ui.';
-        end
-        VAL.u{b} = Ui;              % now (m × n_k)
-
-        % y : prefer DATASET_val if present; otherwise use the TS field
-        yi = [];
-        if have_DS
-            if isfield(DATASET_val,'Y_blocks')           % new layout: (ny × n_k × M)
-                yi = DATASET_val.Y_blocks(:,:,b).';      % (n_k × ny)
-            elseif isfield(DATASET_val,'y_blocks')       % rare legacy naming
-                yi = DATASET_val.y_blocks(:,:,b).';
-            end
-        end
-        if isempty(yi) && isfield(TS_val{b},'y') && ~isempty(TS_val{b}.y)
-            ti = TS_val{b}.y;                            % (n_k × ny × 1 or s)
-            yi = squeeze(ti);                            % (n_k × ny) if s==1
-            if isvector(yi), yi = yi(:); end
-        end
-        VAL.y{b} = yi;  
-
-        if have_DS && isfield(DATASET_val,'W_blocks')
-            VAL.w{b} = DATASET_val.W_blocks(:,:,b);      % (nx × n_k)
-        end
-    end
-end

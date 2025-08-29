@@ -159,21 +159,35 @@ function SUMMARY = run_sweeps_square_black_vs_ddraLip(cfg, grid)
             t_ddra_val_tic = tic;
             num_in_d = 0; num_out_d = 0; sum_sizeI_ddra = 0; t_reach_sum = 0;
             for mval = 1:length(params_true.testSuite_val)
+                % Given: 
                 TS = params_true.testSuite_val{mval};
-                U_nom = params_true.testSuite_val{mval}.u;   % [nu x n_k_val]
-                Uk = cell(1, n_k_val);
-                for k = 1:n_k_val
-                    u_k   = U_nom(:,k);
-                    u_km1 = U_nom(:, max(1, k-1));  % pad with u_1 at k=1
-                    u_stack = [u_k; u_km1];
-                    Uk{k} = zonotope(u_stack, zeros(numel(u_stack),0)); % singleton set
+                [Yv, Uv] = case_to_YU(TS);          % (ny×T), (m×T)
+                T = size(Yv,2);
+                p = 1;                               % Square uses p=1
+                Uk = cell(1, T);
+                for k = 1:T
+                    u_k   = Uv(:,k);
+                    u_km1 = Uv(:, max(1,k-1));
+                    u_stack = [u_k; u_km1];          % [u_k; u_{k-1}]  (m*(p+1)×1)
+                    Uk{k} = zonotope(u_stack, zeros(numel(u_stack),0)); % singleton
                 end
 
                 t_case = tic;
                 [Xsets, sizeI_case] = ddra_reach_lipschitz(params_true.R0, Uk, W, D, Cnl);
                 t_reach_sum = t_reach_sum + toc(t_case);
 
-                [nin, nout] = contain_points_in_sets(TS.y, Xsets);
+                % TS.y is (T × ny × s). Make it (ny × T × s).
+                Y_perm = permute(TS.y, [2 1 3]);
+                
+                % ddra_reach_lipschitz often returns T+1 sets (including the initial set).
+                % Align by skipping the first set if needed.
+                Xuse = Xsets;
+                if numel(Xsets) == size(Y_perm,2) + 1
+                    Xuse = Xsets(2:end);
+                end
+                
+                [nin, nout] = contain_points_in_sets(Y_perm, Xuse);
+
                 num_in_d  = num_in_d  + nin;
                 num_out_d = num_out_d + nout;
                 sum_sizeI_ddra = sum_sizeI_ddra + sizeI_case;
