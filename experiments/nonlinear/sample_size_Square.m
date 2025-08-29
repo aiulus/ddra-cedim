@@ -57,8 +57,8 @@ cfg.black.methodsBlack = ["blackCGP"];   % or ["blackGP","blackCGP"]
 cfg.black.approx = struct( ...
     'p', 1, ...                               % Square has p=1
     'gp_parallel', false, ...
-    'gp_pop_size', 5, ...
-    'gp_num_gen', 3, ...
+    'gp_pop_size', 50, ...
+    'gp_num_gen', 30, ...
     'gp_func_names', {{'times','plus','square'}}, ...
     'gp_max_genes', 2, ...
     'gp_max_depth', 2, ...
@@ -74,7 +74,7 @@ cfg.ddra.alpha_w = 0.00;   % W scale (0 = turn off process noise)
 
 % Shared noise policy (keep apples-to-apples if not studying noise)
 cfg.shared.noise_for_black = false;   % set W=0 for RCSI if false
-cfg.shared.noise_for_ddra  = true;    % DDRA uses W unless false
+cfg.shared.noise_for_ddra  = true;    % DDRA keeps using W unless false
 
 % Label in file names (based on first black-box method)
 rcsi_lbl = rcsi_label_from_cfg(cfg);
@@ -92,7 +92,7 @@ sweep_grid.pe_list  = {struct('mode','randn')};  % fixed excitation
 cfg.lowmem = struct();
 cfg.lowmem.gray_check_contain = true;      % no gray here, but harmless
 cfg.lowmem.append_csv         = true;      % stream CSV rows
-cfg.lowmem.zonotopeOrder_cap  = 50;        % DDRA reduction cap
+cfg.lowmem.zonotopeOrder_cap  = 50;        
 
 % ---------- Run ----------
 SUMMARY = run_sweeps_square_black_vs_ddraLip(cfg, sweep_grid);
@@ -162,53 +162,5 @@ title(['Conservatism vs n_m  (RCSI: ' rcsi_lbl ')']); legend('Location','best');
 
 save_plot(f2, plots_dir, ['square_fidelity_conservatism_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 close all force
-
-
-
-% =================== Helpers ===================
-
-function [Xsets, sizeI] = ddra_reach_lipschitz(R0, U, W, D, C)
-% Alg. 6: local LS model + Z_L + optional Z_eps (from Lipschitz).
-% R0: initial set (zonotope), U: single input set or cell{1..N}, W: process noise
-% D: struct(Xminus,Uminus,Xplus); C.nlip: .ZepsFlag, .Lvec, .gamma
-    if ~iscell(U), U = repmat({U}, 1, getfielddef(C.shared,'n_k_val', getfielddef(C.shared,'n_k',1))); end
-    N  = numel(U);
-    nx = size(center(R0),1);
-
-    % LS linearization about sample means
-    xS = mean(D.Xminus,2);
-    uS = mean(D.Uminus,2);
-    Phi = [ones(1,size(D.Xminus,2)); D.Xminus - xS; D.Uminus - uS];   % [1; x-x*; u-u*]
-    Mhat = (D.Xplus) * pinv(Phi);
-
-    % residual enclosure Z_L (component-wise box)
-    res = D.Xplus - Mhat*Phi;
-    rmax = max(res,[],2); rmin = min(res,[],2);
-    ZL = zonotope(0.5*(rmax+rmin), diag(0.5*(rmax-rmin)));
-
-    % Z_eps (optional): eps_i = 0.5 * L_i * gamma_i
-    Zeps = zonotope(zeros(nx,1));
-    if getfielddef(C.nlip,'ZepsFlag', true)
-        Lvec  = getfielddef(C.nlip,'Lvec', []);
-        gamma = getfielddef(C.nlip,'gamma',[]);
-        if isempty(Lvec) || isempty(gamma)
-            Lvec = zeros(nx,1); gamma = zeros(nx,1); % safe no-op
-        end
-        eps = 0.5 * abs(Lvec(:)) .* abs(gamma(:));
-        Zeps = zonotope(zeros(nx,1), diag(eps));
-    end
-
-    Xsets  = cell(N+1,1); Xsets{1} = R0;
-    sizeI  = 0;
-    for k=1:N
-        Uk = U{k};
-        Xaff  = cartProd(Xsets{k} - xS, Uk - uS);
-        Xnext = Mhat * aug1(Xaff) + W + ZL + Zeps;
-        Xnext = reduce(Xnext, 'girard', getfielddef(C.lowmem,'zonotopeOrder_cap',100));
-        Xsets{k+1} = Xnext;
-
-        Iv = interval(Xnext); sizeI = sizeI + sum(abs(Iv.sup - Iv.inf));
-    end
-end
 
 
