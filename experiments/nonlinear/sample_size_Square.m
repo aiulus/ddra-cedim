@@ -83,7 +83,7 @@ cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
 % ---------- Sweep grid ----------
 sweep_grid = struct();
 sweep_grid.n_m_list = 2:1:20;         % main sweep
-sweep_grid.n_m_list = 2;    
+%sweep_grid.n_m_list = 2;    
 sweep_grid.n_s_list = cfg.shared.n_s; % keep fixed
 sweep_grid.n_k_list = cfg.shared.n_k; % keep fixed
 sweep_grid.pe_list  = {struct('mode','randn')};  % fixed excitation
