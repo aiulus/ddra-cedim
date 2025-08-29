@@ -60,7 +60,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 t0 = tic;
                 % NOTE: ddra_generate_data must return DATASET as 6th out:
                 % DATASET.x0_blocks{b}, DATASET.u_blocks{b} with block length n_k
-                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys_ddra, R0, U, C, pe);
+                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_ddra, sys_cora.dt, R0, U, pe);
                 Tlearn = toc(t0);
     
                 % Build TRAIN and VAL suites deterministically from generator
@@ -70,7 +70,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C_val.shared.n_m = C.shared.n_m_val;
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
-                [~,~,~,~,~, DATASET_val] = ddra_generate_data(sys_ddra, R0, U, C_val, pe);
+                [~,~,~,~,~, DATASET_val] = ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe);
                 TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k);
     
                 % Learn M_AB

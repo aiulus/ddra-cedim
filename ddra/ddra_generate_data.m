@@ -1,4 +1,4 @@
-function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0, U, C, pe)
+function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys, dt, R0, U, pe)
 %DDRA_GENERATE_DATA  Build (X^-, U^-, X^+) blocks and disturbance set W.
 % Adds PE-driven nominal inputs (randn or sin) with optional randomness
 % around the nominal (via U), and reports PE diagnostics in Zinfo.
@@ -61,7 +61,7 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0
         if getfielddef(pe,'deterministic',true)
             rng(10 + m,'twister');   % or any stable mapping of m
         end
-        [U_nom, diagPE] = genPEInput(pe.mode, pe.order, n_u, n_k, sys.dt, U, pe_opts);
+        [U_nom, diagPE] = genPEInput(pe.mode, pe.order, n_u, n_k, dt, U, pe_opts);
         if ~isempty(diagPE.message)
             fprintf('[PE] %s\n', diagPE.message);
         end

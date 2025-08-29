@@ -10,12 +10,12 @@ function VAL = VAL_from_TS(TS_val, DATASET_val)
         % x0
         VAL.x0{b} = TS_val{b}.initialState;
 
-        % u : (m × n_k)
-        Ui = squeeze(TS_val{b}.u);  % usually (n_k × m)
-        if size(Ui,1) > size(Ui,2)  % more rows than cols -> make it (m × n_k)
-            Ui = Ui.';
+        Ui = squeeze(TS_val{b}.u);        % (n_k × n_u)
+
+        if size(Ui,2) > size(Ui,1)
+            Ui = Ui.';                    % ensure (n_k × n_u)
         end
-        VAL.u{b} = Ui;              % now (m × n_k)
+        VAL.u{b} = Ui;
 
         % y : prefer DATASET_val if present; otherwise use the TS field
         yi = [];
