@@ -70,13 +70,13 @@ cfg.shared.n_s = 2;   % samples per traj
 cfg.shared.n_k = 4;    % horizon (train)
 cfg.shared.n_m_val = 2;    % val traj count
 
-cfg.shared.n_s_val = cfg.shared.n_s;
-cfg.shared.n_k_val = cfg.shared.n_k;
+cfg.shared.n_s_val = 1;
+cfg.shared.n_k_val = 1;
 
 % DDRA noise setup (fixed)
 cfg.ddra = struct();
 cfg.ddra.eta_w   = 1;      % number of W generators
-cfg.ddra.alpha_w = 0.00;   % W scale
+cfg.ddra.alpha_w = 0.50;   % W scale
 % --- DDRA ridge guard (defaults) ---
 cfg.ddra.allow_ridge   = false;   % if false and rank-deficient -> skip point
 cfg.ddra.lambda        = 1e-8;    % ridge lambda when allowed
@@ -85,7 +85,7 @@ cfg.ddra.ridge_policy  = "MAB";   % "MAB" (add generator to M_AB) or "W" (inflat
 
 % Gray methods (keep simple/fast)
 cfg.gray = struct();
-cfg.gray.methodsGray = ["grayLS"];
+cfg.gray.methodsGray = ["graySeq"];
 
 rcsi_lbl = rcsi_label_from_cfg(cfg);                
 cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);  
@@ -100,11 +100,11 @@ cfg.shared.use_noise = false;   % or true
 sweep_grid = struct();
 sweep_grid.D_list       = [2];
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
-sweep_grid.n_m_list = [2 4 8 16 32 64 128];
-sweep_grid.n_m_list = [2 4 8 16 32 64];
+%sweep_grid.n_m_list = [2 4 8 16 32 64 128];
+sweep_grid.n_m_list = [10];
 sweep_grid.n_s_list = 5;
-sweep_grid.n_k_list = 10;
-sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',1)}; % keep excitation mode fixed
+sweep_grid.n_k_list = 2:1:10;
+sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',10s)}; % keep excitation mode fixed
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
@@ -132,7 +132,7 @@ disp([SUMMARY.cval_gray SUMMARY.cval_ddra])
 disp([SUMMARY.sizeI_gray SUMMARY.sizeI_ddra])
 
 %% ---------- Visualization: 4 panels (total / learn / validation / inference) ----------
-x = coerce_numeric(SUMMARY.n_m);
+x = coerce_numeric(SUMMARY.n_k);
 colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
 
 f = figure('Name','Runtime panels','Color','w');
@@ -143,8 +143,8 @@ nexttile; hold on;
 plot(x, SUMMARY.t_ddra_total, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
 plot(x, SUMMARY.t_gray_total, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
      'DisplayName', ['RCSI-' rcsi_lbl]);
-xlabel('n_m (number of input trajectories)'); ylabel('Seconds');
-title(['Total runtime vs n_m  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+xlabel('n_k (number of input trajectories)'); ylabel('Seconds');
+title(['Total runtime vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
 % 2) LEARNING
 nexttile; hold on;
@@ -175,7 +175,7 @@ title(['Inference runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','
 save_plot(f, plots_dir, ['runtime_panels_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 % -------- Fidelity / Conservatism panels (vs n_m) --------
-x_nm        = coerce_numeric(SUMMARY.n_m);
+x_nk        = coerce_numeric(SUMMARY.n_k);
 cval_ddra   = coerce_numeric(SUMMARY.cval_ddra);
 cval_gray   = coerce_numeric(SUMMARY.cval_gray);
 sizeI_ddra  = coerce_numeric(SUMMARY.sizeI_ddra);
@@ -186,19 +186,19 @@ tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
 
 % (1) Fidelity
 nexttile; hold on;
-plot(x_nm, cval_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x_nm, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+plot(x_nk, cval_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
+plot(x_nk, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
      'DisplayName', ['RCSI-' rcsi_lbl]);
-xlabel('n_m (number of input trajectories)'); ylabel('Containment on validation (%)');
-title(['Fidelity vs n_m  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+xlabel('n_k (trajectory length)'); ylabel('Containment on validation (%)');
+title(['Fidelity vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
 % (2) Conservatism
 nexttile; hold on;
-plot(x_nm, sizeI_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x_nm, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
+plot(x_nk, sizeI_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
+plot(x_nk, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
      'DisplayName', ['RCSI-' rcsi_lbl]);
-xlabel('n_m (number of input trajectories)'); ylabel('Aggregated interval size (proxy)');
-title(['Conservatism vs n_m  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+xlabel('n_k (trajectory length)'); ylabel('Aggregated interval size (proxy)');
+title(['Conservatism vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
 
 % Save with method in filename
 [plots_dir, ~] = init_io(cfg);

@@ -87,12 +87,12 @@ cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
 sweep_grid = struct();
 %sweep_grid.D_list = [2 3 4 5 6];       % dimensional scalability
 %sweep_grid.D_list = [2 3 4 5 6 7 8 9 10];
-sweep_grid.D_list = [2 3];
+sweep_grid.D_list = 2:2:10;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = cfg.shared.n_m;
 sweep_grid.n_s_list = cfg.shared.n_s;
 sweep_grid.n_k_list = cfg.shared.n_k;
-PE_orders = [10];
+PE_orders = [4];
 sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
 ];

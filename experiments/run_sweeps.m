@@ -49,13 +49,17 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C.shared.n_m_val = max(2, min(n_m, getfielddef(baseC.shared, 'n_m_val', 2)));
                 C.shared.n_s_val = n_s;  C.shared.n_k_val = n_k;
                 C.ddra.alpha_w   = alpha_w;
-                C.shared.seed    = 1; rng(C.shared.seed, 'twister');
+                % --- per-row deterministic seed (distinct datasets per sweep row) ---
+                row_index     = rowi + 1;             % the row we're about to produce
+                row_seed      = 10000 + row_index;    % any fixed offset is fine
+                C.shared.seed = row_seed;
+                rng(row_seed,'twister');
                 if C.shared.dyn == "k-Mass-SD"; C.shared.dyn_p = D; end
     
                 % --- Build true systems ---
                 [sys_cora, sys_ddra, R0, U] = build_true_system(C);
                 use_noise   = resolve_use_noise(C.shared);
-    
+                pe = finalize_pe_order(pe, sys_cora, C);
                 % ================= DDRA =================
                 t0 = tic;
                 % NOTE: ddra_generate_data must return DATASET as 6th out:
@@ -209,16 +213,22 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % ---- DDRA inference (stored or streaming) on SAME validation points
                 if LM.store_ddra_sets
                     t2 = tic;
-                    [Xsets_ddra, sizeI_ddra] = ddra_infer(sys_ddra, R0, U, W_eff, M_AB, C);
+                    % add VAL as an optional arg; legacy code can ignore it
+                    [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_eff, M_AB, C, VAL);  
                     Tinfer = toc(t2);
+                    wid_ddra = cellfun(@(Z) sum(abs(generators(Z)),'all'), Xsets_ddra);
+                    sizeI_ddra = mean(wid_ddra(:));                                       
+                
                     % Recompute containment with EXACT VAL points instead of MC
                     cval_ddra = contains_on_VAL_linear(sys_ddra, W_eff, Xsets_ddra, VAL);
                     clear Xsets_ddra
                 else
                     t2 = tic;
-                    [sizeI_ddra, cval_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_eff, M_AB, C, VAL);
+                    [~, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_eff, M_AB, C, VAL);
                     Tinfer = toc(t2);
+                    sizeI_ddra = mean(wid_ddra(:)); 
                 end
+
     
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 %% Start patch
