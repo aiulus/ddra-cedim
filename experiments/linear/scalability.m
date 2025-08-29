@@ -118,7 +118,7 @@ cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
 cfg.allow_parallel = false;  % keep serial
 
 
-% ---------- Run ----------
+%% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
 
 % ---------- Quick plots ----------

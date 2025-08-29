@@ -72,7 +72,7 @@ cfg.shared.use_noise = false;   % or true
 
 % Sweep grid: two shapes × multiple orders
 sweep_grid = struct();
-sweep_grid.D_list        = 2;                    % fix dimension to isolate PE
+sweep_grid.D_list        = 2;                    
 sweep_grid.alpha_w_list  = cfg.ddra.alpha_w;
 sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;

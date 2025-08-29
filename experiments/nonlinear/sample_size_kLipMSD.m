@@ -1,17 +1,12 @@
-%% HOW TO USE (Square / Nonlinear Sample-Size Sweep)
+%% HOW TO USE (k-MSD / Sample-Size Sweep)
 % What it does:
-%   Uses CORA's simple NARX "Square" via custom_loadDynamics(), sweeps n_m
+%   Uses your k-MSD (state-space) via custom_loadDynamics(), sweeps n_m
 %   (number of unique input trajectories), and produces:
 %     (i) runtime panels  and  (ii) fidelity/conservatism plots.
 %
 % Key knobs:
 %   - sweep_grid.n_m_list (e.g., 2:1:20)
 %   - Keep excitation fixed: sweep_grid.pe_list = {struct('mode','randn')}
-%
-% Memory-efficiency toggles:
-%   cfg.lowmem.gray_check_contain = false;  % only applies to GRAY (unused here)
-%   cfg.lowmem.append_csv         = true;   % stream CSV row-by-row
-%   cfg.lowmem.zonotopeOrder_cap  = 50;     % reduce order in DDRA reach
 %
 % Outputs:
 %   - CSV + plots via init_io() under experiments/results/{data,plots}/<tag>_sweeps
@@ -20,12 +15,12 @@ rng(1,'twister');
 
 % ---------- Minimal cfg ----------
 cfg = struct();
-cfg.io = struct('save_tag', 'Square_sample_size_sweep');
+cfg.io = struct('save_tag', 'nonlinear_kMSD_sample_size_sweep');
 
-% System & shared options (nonlinear, NARX p=1)
+% System & shared options (state-space k-MSD)
 cfg.shared = struct();
-cfg.shared.dyn    = "Square";        % <- from custom_loadDynamics()
-cfg.shared.type   = "rand";          % ("standard" or "rand") preset for Square
+cfg.shared.dyn    = "kMSD";          % <- from custom_loadDynamics()
+cfg.shared.type   = "rand";          % "standard"|"rand"|"diag" presets in your loader
 cfg.shared.p_extr = 0.3;             % extreme-input probability during data gen
 
 % Identification + reachability options (CORA-style)
@@ -51,11 +46,10 @@ cfg.shared.n_m_val = cfg.shared.n_m;  % validation: # input trajectories
 cfg.shared.n_s_val = cfg.shared.n_s;
 cfg.shared.n_k_val = cfg.shared.n_k;
 
-% Black-box RCSI settings (fast-ish)
+% Black-box RCSI settings
 cfg.black = struct();
 cfg.black.methodsBlack = ["blackCGP"];   % or ["blackGP","blackCGP"]
 cfg.black.approx = struct( ...
-    'p', 1, ...                               % Square has p=1
     'gp_parallel', false, ...
     'gp_pop_size', 50, ...
     'gp_num_gen', 30, ...
@@ -72,7 +66,7 @@ cfg.ddra = struct();
 cfg.ddra.eta_w   = 1;      % number of W generators
 cfg.ddra.alpha_w = 0.00;   % W scale (0 = turn off process noise)
 
-% Shared noise policy (keep apples-to-apples if not studying noise)
+% Shared noise policy (apples-to-apples if not studying noise)
 cfg.shared.noise_for_black = false;   % set W=0 for RCSI if false
 cfg.shared.noise_for_ddra  = true;    % DDRA keeps using W unless false
 
@@ -82,27 +76,28 @@ cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
+sweep_grid.D_list = 2;
 sweep_grid.n_m_list = 2:1:20;         % main sweep
-sweep_grid.n_m_list = 2;    
+%sweep_grid.n_m_list = 2;             % (uncomment to smoke-test quickly)
 sweep_grid.n_s_list = cfg.shared.n_s; % keep fixed
 sweep_grid.n_k_list = cfg.shared.n_k; % keep fixed
 sweep_grid.pe_list  = {struct('mode','randn')};  % fixed excitation
 
 % ---------- Low-memory toggles ----------
 cfg.lowmem = struct();
-cfg.lowmem.gray_check_contain = true;      % no gray here, but harmless
+cfg.lowmem.gray_check_contain = false;     % gray unused here
 cfg.lowmem.append_csv         = true;      % stream CSV rows
-cfg.lowmem.zonotopeOrder_cap  = 50;        
+cfg.lowmem.zonotopeOrder_cap  = 50;
 
 % ---------- Run ----------
-SUMMARY = run_sweeps_square_black_vs_ddraLip(cfg, sweep_grid);
-SUMMARY = ensure_time_totals_square(SUMMARY);  % totals for plots (local helper)
+SUMMARY = run_sweeps_kmsd_black_vs_ddraLip(cfg, sweep_grid);
+SUMMARY = ensure_time_totals_square(SUMMARY);  % reuses your local helper
 
-% ---------- Plots: Runtime panels (total / learn / validation / inference) ----------
+% ---------- Plots: Runtime panels ----------
 x = coerce_numeric(SUMMARY.n_m);
 colors = struct('ddra',[0.23 0.49 0.77],'black',[0.20 0.55 0.30]);
 
-f = figure('Name','Square | Runtime panels','Color','w');
+f = figure('Name','k-MSD | Runtime panels','Color','w');
 tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
 
 % 1) TOTAL
@@ -134,7 +129,7 @@ xlabel('n_m'); ylabel('Seconds');
 title('Inference runtime'); legend('Location','best');
 
 [plots_dir, ~] = init_io(cfg);
-save_plot(f, plots_dir, ['square_runtime_panels_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
+save_plot(f, plots_dir, ['kMSD_runtime_panels_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 % ---------- Plots: Fidelity & Conservatism vs n_m ----------
 x_nm        = coerce_numeric(SUMMARY.n_m);
@@ -143,7 +138,7 @@ cval_black  = coerce_numeric(SUMMARY.cval_black);
 sizeI_ddra  = coerce_numeric(SUMMARY.sizeI_ddra);
 sizeI_black = coerce_numeric(SUMMARY.sizeI_black);
 
-f2 = figure('Name','Square | Fidelity & Conservatism','Color','w');
+f2 = figure('Name','k-MSD | Fidelity & Conservatism','Color','w');
 tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
 
 % (1) Fidelity
@@ -160,7 +155,7 @@ plot(x_nm, sizeI_black, '-s', 'Color',colors.black, 'LineWidth',1.6, 'DisplayNam
 xlabel('n_m (input trajectories)'); ylabel('Aggregated interval size (proxy)');
 title(['Conservatism vs n_m  (RCSI: ' rcsi_lbl ')']); legend('Location','best');
 
-save_plot(f2, plots_dir, ['square_fidelity_conservatism_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
+save_plot(f2, plots_dir, ['kMSD_fidelity_conservatism_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 close all force
 
 

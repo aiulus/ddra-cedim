@@ -46,53 +46,25 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0
     p_extr = getfielddef(C.shared,'p_extr',0.0);
 
     % ------------------ nominal PE inputs (per trajectory) ------------------
-    % Build U_nom_all{m} as (n_u × n_k)
+    % ------------------ nominal PE inputs (per trajectory) ------------------
     U_nom_all = cell(1, n_m);
-    Leff_time = max(1, min(L, max(1, n_k-1)));   % ensure at least 1, at most n_k-1
-    Leff      = Leff_time;
+    % Honor CORA-like continuity default via options.contInput
+    contInput = true;
+    if isfield(C,'shared') && isfield(C.shared,'options_reach')
+        % nothing needed; contInput is purely an input-generation choice
+    end
+    pe_opts = struct('strength', getfielddef(pe,'strength',1), ...
+                     'deterministic', getfielddef(pe,'deterministic',true), ...
+                     'contInput', contInput);
 
     for m = 1:n_m
-        % if det, rng(1000+m,'twister'); end
-
-        % Temporal basis S (Leff × n_k)
-        switch mode
-            case 'sinwave'
-                t = 0:(n_k-1);
-                f = linspace(0.08, 0.45, Leff);      % spread frequencies
-                phi = 2*pi*rand(1,Leff);
-                S = zeros(Leff, n_k);
-                for l = 1:Leff
-                    S(l,:) = sin(2*pi*f(l)*t + phi(l));
-                end
-            otherwise  % 'randn'
-                S = randn(Leff, n_k);
+        if getfielddef(pe,'deterministic',true)
+            rng(10 + m,'twister');   % or any stable mapping of m
         end
-
-        % Map temporal bases to input space with Leff directions
-        if isa(U,'zonotope') && ~isempty(U.G)
-            GU = U.G;                          % (n_u × eta_u)
-            if size(GU,2) >= Leff
-                V = GU(:,1:Leff);
-            else
-                V = [GU, randn(size(GU,1), Leff-size(GU,2))];
-            end
-        else
-            V = randn(n_u, Leff);
+        [U_nom, diagPE] = genPEInput(pe.mode, pe.order, n_u, n_k, sys.dt, U, pe_opts);
+        if ~isempty(diagPE.message)
+            fprintf('[PE] %s\n', diagPE.message);
         end
-        % Normalize columns (avoid huge scales if GU small)
-        vn = vecnorm(V); vn(vn==0) = 1;
-        V = V ./ vn;
-
-        % Center of U (if available)
-        if isa(U,'zonotope'), cU = center(U); else, cU = zeros(n_u,1); end
-
-        U_nom = cU + Aamp * (V * S);
-
-        % Optional: accumulate for smoother, "continuous-ish" inputs
-        if n_k >= 2
-            U_nom = cumsum(U_nom, 2);
-        end
-
         U_nom_all{m} = U_nom;
     end
 
@@ -151,7 +123,10 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(sys, R0
     % ------------------ PE diagnostics ------------------
     % Use FIRST nominal block for Hankel stats (clearer than concat).
     U1 = U_nom_all{1};                     % (n_u × n_k)
-    [hrank, hfull, rfrac] = hankel_stats(U1, n_u, L);
+    %[hrank, hfull, rfrac] = hankel_stats(U1, n_u, L);
+    Lraw = max(1, round(getfielddef(pe,'order',2)));
+    Leff = min(Lraw, max(1, n_k));    % <= cap by n_k
+    [hrank, hfull, rfrac] = hankel_stats(U1, n_u, Leff);
 
     Z = [Xminus; Uminus];
     Zinfo.rankZ      = rank(Z);
