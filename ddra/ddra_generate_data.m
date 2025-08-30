@@ -46,13 +46,9 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys,
     p_extr = getfielddef(C.shared,'p_extr',0.0);
 
     % ------------------ nominal PE inputs (per trajectory) ------------------
-    % ------------------ nominal PE inputs (per trajectory) ------------------
     U_nom_all = cell(1, n_m);
     % Honor CORA-like continuity default via options.contInput
     contInput = true;
-    if isfield(C,'shared') && isfield(C.shared,'options_reach')
-        % nothing needed; contInput is purely an input-generation choice
-    end
     pe_opts = struct('strength', getfielddef(pe,'strength',1), ...
                      'deterministic', getfielddef(pe,'deterministic',true), ...
                      'contInput', contInput);

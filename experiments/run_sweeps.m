@@ -74,6 +74,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C_val.shared.n_m = C.shared.n_m_val;
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
+                rng(row_seed+1,'twister');
                 [~,~,~,~,~, DATASET_val] = ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe);
                 TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k);
     

@@ -22,7 +22,7 @@ function [U_nom, diagPE] = genPEInput(mode, L, n_u, n_k, dt, U_set, opts)
 
     % ---- feasibility & effective window length ---------------------------
     % Block Hankel H has size (n_u*L) x (n_k-L+1). To be able to reach
-    % full row rank n_u*L, we must have n_k-L+1 >= n_u*L  ⇒
+    % full row rank n_u*L, we must have n_k-L+1 >= n_u*L  
     % n_k >= (n_u+1)*L - 1. If not, we reduce L and flag it.
     L_req = L;
     L_eff = min(L_req, max(1, floor((n_k+1)/(n_u+1))));
