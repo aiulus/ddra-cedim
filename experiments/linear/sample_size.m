@@ -104,7 +104,7 @@ sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = [10];
 sweep_grid.n_s_list = 5;
 sweep_grid.n_k_list = 2:1:10;
-sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',10s)}; % keep excitation mode fixed
+sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',10)}; % keep excitation mode fixed
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
