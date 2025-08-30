@@ -104,7 +104,7 @@ sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = [10];
 sweep_grid.n_s_list = 5;
 sweep_grid.n_k_list = 2:1:10;
-sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',10s)}; % keep excitation mode fixed
+sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',10)}; % keep excitation mode fixed
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
@@ -205,3 +205,8 @@ title(['Conservatism vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location'
 save_plot(f2, plots_dir, ['fidelity_conservatism_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
 
 close all force
+
+%[~, results_dir] = init_io(cfg);
+%art = fullfile(results_dir,'artifacts','row_0001.mat');  % pick any row you like
+%reachset_panel_plot(art, 'Dims',[1 2], 'Every',1, 'Order',50, ...
+%    'Title','True vs RCSI/Gray vs DDRA (VAL)');

@@ -245,26 +245,31 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                     % pack only what plotting needs
                     artifact = struct();
-                    if numel(configs) >= 2
-                        artifact.sys_gray = configs{idxGray}.sys;    % identified RCSI/Gray model (CORA linearSysDT)
-                    else
-                        artifact.sys_gray = configs{1}.sys;    % fallback
+                    artifact.sys_gray = configs{idxGray}.sys;    % identified model (linearSysDT)
+                    artifact.sys_ddra = sys_true_dt;             % normalized true model (linearSysDT)
+                    artifact.VAL      = VAL;                     % exact (x0,u,y) used on VAL
+                    artifact.W_eff    = W_eff;                   % disturbance used by DDRA
+                    artifact.M_AB     = M_AB;                    % matrix zonotope for DDRA
+                    % ensure U is present inside VAL for plotting:
+                    if ~isfield(artifact.VAL,'U') || isempty(artifact.VAL.U)
+                        artifact.VAL.U = U;
                     end
-                    artifact.sys_ddra = sys_ddra;              % true/nominal model (A,B,C,D,dt struct)
-                    artifact.VAL      = VAL;                   % exact (x0,u,y[,w]) used in validation
-                    artifact.W_eff    = W_eff;                 % disturbance used by DDRA
+                    % unify meta a bit (keep whatever was there, don't overwrite unnecessarily)
                     artifact.meta = struct( ...
-                        'rowi', rowi+1, 'D', D, 'alpha_w', alpha_w, ...
+                        'row', rowi+1, 'dt', sys_true_dt.dt, ...
+                        'D', D, 'alpha_w', alpha_w, ...
                         'n_m', C.shared.n_m, 'n_s', C.shared.n_s, 'n_k', C.shared.n_k, ...
-                        'pe',  pe, 'save_tag', cfg.io.save_tag);
-                
-                    % include R0 for nicer initial-set plotting (if not already present)
-                    if ~isfield(artifact.VAL,'R0') || isempty(artifact.VAL.R0)
-                        artifact.VAL.R0 = R0;
-                    end
+                        'pe', pe, 'save_tag', cfg.io.save_tag);
                 
                     artfile = fullfile(artdir, sprintf('row_%04d.mat', rowi+1));
-                    save(artfile, '-struct', 'artifact');
+                    if exist(artfile,'file')
+                        % enrich existing file instead of overwriting the richer content
+                        save(artfile, '-struct', 'artifact', '-append');
+                    else
+                        % first write for this row
+                        save(artfile, '-struct', 'artifact', '-v7.3');
+                    end
+
                 end
                 
                 clear configs  % free Gray objects early

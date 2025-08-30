@@ -1,19 +1,21 @@
-function [Xsets, sizeI] = ddra_infer(sys, R0, U, W, M_AB, C, varargin) 
-    K = red_order(C);
+function [Xsets, sizeI] = ddra_infer(sys, R0, U, W, M_AB, C, varargin)
+% DDRA_INFER  Stored-sets propagation.
+% Signature unchanged; extra arg (VAL) is accepted & ignored.
+
+    K  = red_order(C);
     nk = C.shared.n_k;
 
     Xsets = cell(nk,1);
-    Xk = R0;
+    Xk = R0; 
     sizeI = 0;
 
     for k = 1:nk
         Xk    = reduce(Xk,'girard',K);
-        Xnext = M_AB * cartProd(Xk, U) + W;   
+        Xnext = M_AB * cartProd(Xk, U) + W;
         Xnext = reduce(Xnext,'girard',K);
-
         Xsets{k} = Xnext;
-        sizeI    = sizeI + sum(abs(generators(Xnext)),'all');
-        Xk       = Xnext;
+        sizeI = sizeI + sum(abs(generators(Xnext)),'all');
+        Xk = Xnext;
     end
 end
 
