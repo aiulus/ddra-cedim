@@ -1,8 +1,14 @@
-function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U_unused, W, M_AB, C, VAL)
-% Like ddra_infer, but never stores Xsets; accumulates output-size proxy &
-% synchronized containment on the exact validation points in VAL.
+function [sizeI_ddra, contain_pct, wid_ddra] = ddra_infer_size_streaming(sys, R0, U_unused, W, M_AB, C, VAL)
+% Like ddra_infer, but does not store X sets.
+% Returns:
+%   sizeI_ddra  - accumulated interval-size proxy over all steps/blocks
+%   contain_pct - (%) of validation points contained
+%   wid_ddra    - per-step interval-size values (vector)  [optional]
+%
+% Backward compatible:
+%   - 1 or 2 outputs work as before
+%   - 3rd output provides widths so callers can do mean(wid_ddra(:))
 
-    % ---- guards ----
     assert(nargin>=7 && ~isempty(VAL) && isfield(VAL,'u') && isfield(VAL,'y'), ...
         'ddra_infer_size_streaming: VAL (y,u,...) is required for synchronized validation.');
 
@@ -10,23 +16,17 @@ function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U_unused
     nx = size(sys.A,1);
     m  = size(sys.B,2);
 
-    LM    = getfielddef(C,'lowmem',struct());
-    ordCap= getfielddef(LM,'zonotopeOrder_cap', ...
+    LM     = getfielddef(C,'lowmem',struct());
+    ordCap = getfielddef(LM,'zonotopeOrder_cap', ...
                  getfielddef(C.shared.options_reach,'zonotopeOrder',100));
-    Kred  = min(100, ordCap);
+    Kred   = min(100, ordCap);
 
-    % ----- pick C, D robustly (avoid isprop on CORA classes) -----
+    % pick C, D robustly
     Cmat = [];
     Dmat = [];
-
     if isfield(VAL,'C') && ~isempty(VAL.C), Cmat = VAL.C; end
-    if isempty(Cmat)
-        Cmat = safe_get_prop(sys,'C',[]);
-    end
-    if isempty(Cmat)
-        % no output matrix provided -> identity output
-        Cmat = eye(nx);
-    end
+    if isempty(Cmat), Cmat = safe_get_prop(sys,'C',[]); end
+    if isempty(Cmat), Cmat = eye(nx); end
     ny = size(Cmat,1);
 
     if isfield(VAL,'D') && ~isempty(VAL.D), Dmat = VAL.D; end
@@ -38,10 +38,12 @@ function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U_unused
     sizeI_ddra = 0;
     num_in = 0; num_all = 0;
     tol = 1e-6;
+    wid_ddra = [];  % collect per-step widths here
 
     B = numel(VAL.x0);
     for b = 1:B
-        x0 = VAL.x0{b};                 % (nx×1)
+        x0 = VAL.x0{b};                 % (nx×1) or row -> make column
+        if isrow(x0), x0 = x0.'; end
         Uk = VAL.u{b};                  % (n_k×m) or (m×n_k)
         Yk = VAL.y{b};                  % (n_k×ny)
 
@@ -54,14 +56,16 @@ function [sizeI_ddra, contain_pct] = ddra_infer_size_streaming(sys, R0, U_unused
 
         for k = 1:n_k
             X  = reduce(X,'girard',Kred);
-            u_k = Uk(k,:).';            % (m×1)
-            U_point = zonotope(u_k);    % deterministic input
+            u_k = Uk(k,:).';                  % (m×1)
+            U_point = zonotope(u_k);          % deterministic input
             Xnext = M_AB * cartProd(X, U_point) + W;
 
             % output set and its interval size
             Yset = Cmat*Xnext + Dmat*u_k;
             Iv   = interval(Yset);
-            sizeI_ddra = sizeI_ddra + sum(abs(Iv.sup(:) - Iv.inf(:)));
+            w_k  = sum(abs(Iv.sup(:) - Iv.inf(:)));  % width proxy at step k
+            sizeI_ddra = sizeI_ddra + w_k;
+            wid_ddra(end+1,1) = w_k;                 
 
             % synchronized containment
             y_meas = Yk(k,:).';

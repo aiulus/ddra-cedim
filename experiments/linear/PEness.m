@@ -46,7 +46,7 @@ cfg.shared.cs_base = struct('robustnessMargin',1e-9,'verbose',false,'cost',"inte
 % Data budgets
 cfg.shared.n_m = 3; 
 cfg.shared.n_s = 2;  
-cfg.shared.n_k = 10;
+cfg.shared.n_k = 20;
 cfg.shared.n_m_val = 2; 
 cfg.shared.n_s_val = cfg.shared.n_s; 
 cfg.shared.n_k_val = cfg.shared.n_k;
@@ -78,7 +78,7 @@ sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;
 sweep_grid.n_k_list      = cfg.shared.n_k;
 PE_orders = [1 2 3 4 5 6 7 8 9 10];
-PE_orders = [1 2];
+%PE_orders = [1 2];
 sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
 ];
