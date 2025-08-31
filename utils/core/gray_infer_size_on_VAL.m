@@ -1,49 +1,81 @@
-function sizeI_gray = gray_infer_size_on_VAL(sys, TS, C, params, varargin)
-%GRAY_INFER_SIZE_ON_VAL  Aggregated output-interval size over VAL.
-% Usage:
-%   sizeI_gray = gray_infer_size_on_VAL(sys, TS_val, C, params)
-%   sizeI_gray = gray_infer_size_on_VAL(sys, TS_val, C, params, 'overrideW', W) % accepted, ignored
-%
-% Notes:
-%   • Accepts extra name–value args to be API-compatible with callers.
-%   • Computes sum_k || interval-width(R_y(k)) ||_1 across all k and testcases.
-%   • Uses C.shared.options_reach (with cs stripped) for pure reach.
+function sizeI = gray_infer_size_on_VAL(sys, TS_val, C, params_in, varargin)
+%GRAY_INFER_SIZE_ON_VAL  Output-interval size proxy for Gray on VAL points.
+% Uses measured u (per testcase), injects params.W (zero if noise disabled),
+% strips optimizer block from options, and maps to output via linearMap.
 
-    % -------- parse optional args (accepted for compatibility) --------
     p = inputParser;
-    addParameter(p, 'overrideW', []);       % currently unused for linearSysDT reach
+    addParameter(p,'overrideW',[]);     % if provided, use this W
     parse(p, varargin{:});
+    W_override = p.Results.overrideW;
 
-    % -------- normalize inputs --------
-    if ~iscell(TS), TS = {TS}; end
+    % base options: remove 'cs' before calling reach()
+    options = getfielddef(C.shared,'options_reach', struct());
+    if isfield(options,'cs'); options = rmfield(options,'cs'); end
 
-    opts = C.shared.options_reach;
-    if isfield(opts, 'cs'), opts = rmfield(opts, 'cs'); end
+    acc = 0; count = 0;
 
-    sizeI_gray = 0;
+    for m = 1:numel(TS_val)
+        tc = TS_val{m};
+        nk = size(tc.y,1);
 
-    for m = 1:numel(TS)
-        tc = TS{m};
+        % --- build params for this testcase
+        params = struct();
+        params.R0     = params_in.R0 + tc.initialState;
+        params.u      = tc.u';                              % measured input
+        params.tFinal = sys.dt * (nk-1);
 
-        % Build per-case params: deterministic input u and shifted R0
-        params_m = params;
-        params_m.R0     = params.R0 + tc.initialState;
-        Ui = tc.u;            % (n_k × n_u) or (n_k × n_u × s)
-        Ui = squeeze(Ui);     % drop singleton 3rd dim if present
-        if size(Ui,1) < size(Ui,2)   % (m×n_k) -> transpose to (n_k×m)
-            Ui = Ui.';
+        % input padding if model expects more channels
+        du = sys.nrOfInputs - size(params.u,1);
+        if du ~= 0
+            params.u = cat(1, params.u, zeros(du, size(params.u,2), size(params.u,3)));
         end
-        params_m.u      = Ui';
-        params_m.tFinal = sys.dt * (size(params_m.u,2)-1);
 
-        % Reach in output space
-        R = reach(sys, params_m, opts);
-        Ysets = R.timePoint.set;     % cell{1..K} of output sets
+        % --- disturbance set W (required if nrOfDisturbances>0)
+        if sys.nrOfDisturbances > 0
+            if ~isempty(W_override)
+                params.W = W_override;
+            elseif isfield(params_in,'W') && ~isempty(params_in.W)
+                params.W = params_in.W;
+            else
+                % zero-disturbance zonotope with correct dimension
+                params.W = zonotope(zeros(sys.nrOfDisturbances,1));
+            end
+        end
 
-        % Aggregate interval widths
-        for k = 1:numel(Ysets)
-            Ik = interval(Ysets{k});
-            sizeI_gray = sizeI_gray + sum(abs(Ik.sup(:) - Ik.inf(:)));
+        % --- reach in state space
+        R = reach(sys, params, options);   % CORA object
+        R = R.timePoint.set;               % cell array of contSets
+
+        % --- map to outputs and accumulate interval width
+        for k = 1:nk
+            Xk = R{k};
+            if isempty(Xk) || ~isa(Xk,'contSet'); continue; end
+            try
+                Yk = linearMap(Xk, sys.C);   % CORA: set first, matrix second
+            catch
+                % fallback for identity-output or missing C
+                Yk = Xk;
+            end
+            if isa(Yk,'zonotope')
+                acc = acc + sum(abs(generators(Yk)), 'all');
+                count = count + 1;
+            else
+                % best-effort fallback
+                try
+                    Z = zonotope(Yk);
+                    acc = acc + sum(abs(generators(Z)), 'all');
+                    count = count + 1;
+                catch
+                    % skip if unhandled set type
+                end
+            end
         end
     end
+
+    sizeI = acc / max(1, count);
+end
+
+% --- tiny util (kept local to avoid cross-file deps) ---
+function v = getfielddef(S,f,d)
+    if isstruct(S) && isfield(S,f), v = S.(f); else, v = d; end
 end

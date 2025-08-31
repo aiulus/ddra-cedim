@@ -98,12 +98,12 @@ cfg.shared.use_noise = false;   % or true
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
-sweep_grid.D_list       = [2];
+sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 %sweep_grid.n_m_list = [2 4 8 16 32 64 128];
-sweep_grid.n_m_list = [10];
+sweep_grid.n_m_list = 10;
 sweep_grid.n_s_list = 5;
-sweep_grid.n_k_list = 2:1:10;
+sweep_grid.n_k_list = 2:2:20;
 sweep_grid.pe_list = { struct('mode','randn','strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles

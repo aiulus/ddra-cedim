@@ -208,6 +208,8 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                     W_used   = zonotope(zeros(size(center(W_eff),1),1)); % zero disturbance
                 end
                 W_for_gray = W_used;            % keep Gray and DDRA aligned at inference
+                %% Temporary fix: Overwrites the process noise on gray-box RCSI
+                W_for_gray = zonotope(zeros(sys_cora.nrOfDisturbances,1));
 
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
@@ -223,11 +225,6 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                 idxGray = find(arrayfun(@(c) isfield(c{1},'method') && want==string(c{1}.method), configs), 1, 'first');
                 if isempty(idxGray), idxGray = 1; end
 
-                %% Debug statements
-                fprintf("Center of R0 is:");
-                center(configs{idxGray}.params.R0)   
-                %% 
-    
                 % Build VAL record (x0,u) from TS_val and pass to both sides
                 VAL = VAL_from_TS(TS_val, DATASET_val);
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
@@ -315,7 +312,8 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                     [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
 
-                    Ysets_ddra = cellfun(@(X) linearMap(sys_true_dt.C, X), Xsets_ddra, 'uni', 0);
+                    Ysets_ddra =  Xsets_ddra;
+
                     % If you model output noise V as a zonotope, inflate here:
                     % Ysets_ddra = cellfun(@(Y) Y + V, Ysets_ddra, 'uni', 0);
                     
