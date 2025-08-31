@@ -69,6 +69,40 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % Build TRAIN and VAL suites deterministically from generator
                 TS_train = testSuite_fromDDRA(sys_cora, R0, DATASET, C.shared.n_k);
+
+                okPE = check_PE_order(TS_train, pe.order);
+                if ~okPE
+                    % mark and skip this row to keep the grid aligned
+                    rowi = rowi + 1;
+                    row = pack_row(C, D, alpha_w, pe, ...
+                        NaN, NaN, NaN, NaN, NaN, ...
+                        Zinfo.rankZ, Zinfo.condZ, ...
+                        Tlearn, NaN, NaN, NaN, NaN, NaN);
+                    row.skipped      = true;
+                    row.skip_reason  = "PE_not_satisfied";
+                    row.use_noise    = resolve_use_noise(C.shared);
+                
+                    % --- write row ---
+                    if rowi == 1
+                        hdr = fieldnames(orderfields(row))';
+                        if LM.append_csv
+                            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
+                        else
+                            cells = cell(Ntot, numel(hdr));
+                        end
+                    end
+                    if LM.append_csv
+                        append_row_csv(csv_path, hdr, row);
+                    else
+                        for j = 1:numel(hdr)
+                            v = row.(hdr{j}); if isstring(v), v = char(v); end
+                            cells{rowi, j} = v;
+                        end
+                    end
+                
+                    clear TS_train DATASET  
+                    continue;               % skip to next sweep point
+                end
     
                 C_val = C;
                 C_val.shared.n_m = C.shared.n_m_val;
