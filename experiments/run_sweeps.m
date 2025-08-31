@@ -132,12 +132,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                 clear Xminus Uminus Xplus  % free data blocks early
 
     
-                % ---- unified disturbance policy ----               
-                if use_noise
-                    W_for_gray = W;
+                % ---- unified disturbance policy ----
+                % W_eff: from ddra_learn_Mab (may include ridge inflation)
+                if resolve_use_noise(C.shared)
+                    W_used   = W_eff;           % both branches use effective W
                 else
-                    W_for_gray = zonotope(zeros(size(center(W),1),1));
+                    W_used   = zonotope(zeros(size(center(W_eff),1),1)); % zero disturbance
                 end
+                W_for_gray = W_used;            % keep Gray and DDRA aligned at inference
 
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
@@ -149,7 +151,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                     'externalTS_val',   TS_val);  
                 Tlearn_g = toc(t3);
 
-                idxGray = min(2, numel(configs));  % 2 if exists, else 1
+                want = "graySeq";
+                idxGray = find(arrayfun(@(c) isfield(c{1},'method') && want==string(c{1}.method), configs), 1, 'first');
+                if isempty(idxGray), idxGray = 1; end
+
     
                 % Build VAL record (x0,u) from TS_val and pass to both sides
                 VAL = VAL_from_TS(TS_val, DATASET_val);
@@ -190,7 +195,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                     sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
                 
-                    if use_noise, W_plot = W_eff; else, W_plot = zonotope(zeros(size(center(W_eff),1),1)); end
+                    if use_noise, W_plot = W_used; else, W_plot = zonotope(zeros(size(center(W_used),1),1)); end
                 
                     reach_dir = fullfile(plots_dir,'reach'); if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
                     savename = fullfile(reach_dir, sprintf('row_%04d_y%d%d', row_index, dims(1), dims(2)));
@@ -215,17 +220,22 @@ function SUMMARY = run_sweeps(cfg, grid)
                 if LM.store_ddra_sets
                     t2 = tic;
                     % add VAL as an optional arg; legacy code can ignore it
-                    [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_eff, M_AB, C, VAL);  
+                    [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    wid_ddra = cellfun(@(Z) sum(abs(generators(Z)),'all'), Xsets_ddra);
-                    sizeI_ddra = mean(wid_ddra(:));                                       
-                
-                    % Recompute containment with EXACT VAL points instead of MC
-                    cval_ddra = contains_on_VAL_linear(sys_ddra, W_eff, Xsets_ddra, VAL);
+
+                    Ysets_ddra = cellfun(@(X) linearMap(sys_true_dt.C, X), Xsets_ddra, 'uni', 0);
+                    % If you model output noise V as a zonotope, inflate here:
+                    % Ysets_ddra = cellfun(@(Y) Y + V, Ysets_ddra, 'uni', 0);
+                    
+                    wid_ddra = cellfun(@(Z) sum(abs(generators(Z)), 'all'), Ysets_ddra);
+                    sizeI_ddra = mean(wid_ddra(:));
+                    % Containment should also be done in output-space:
+                    cval_ddra = contains_on_VAL_linear(sys_true_dt, W_used, Ysets_ddra, VAL);  % ensure this checks y in Y-set
+
                     clear Xsets_ddra
                 else
                     t2 = tic;
-                    [~, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_eff, M_AB, C, VAL);
+                    [~, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
                     sizeI_ddra = mean(wid_ddra(:)); 
                 end
@@ -235,7 +245,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 %% Start patch
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
-                sizeI_gray = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, configs{idxGray}.params);
+                sizeI_gray = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
+                                    configs{idxGray}.params, 'overrideW', W_for_gray);
                 Tinfer_g   = toc(t4);
                 
                 % --- Optional: save plotting artifact for this row ---
@@ -246,36 +257,27 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                     % pack only what plotting needs
                     artifact = struct();
-                    artifact.sys_gray = configs{idxGray}.sys;    % identified model (linearSysDT)
-                    artifact.sys_ddra = sys_true_dt;             % normalized true model (linearSysDT)
-                    artifact.VAL      = VAL;                     % exact (x0,u,y) used on VAL
-                    artifact.W_eff    = W_eff;                   % disturbance used by DDRA
-                    artifact.M_AB     = M_AB;                    % matrix zonotope for DDRA
-                    % ensure U is present inside VAL for plotting:
-                    if ~isfield(artifact.VAL,'U') || isempty(artifact.VAL.U)
-                        artifact.VAL.U = U;
-                    end
-                    % unify meta a bit (keep whatever was there, don't overwrite unnecessarily)
-                    artifact.meta = struct( ...
-                        'row', rowi+1, 'dt', sys_true_dt.dt, ...
-                        'D', D, 'alpha_w', alpha_w, ...
-                        'n_m', C.shared.n_m, 'n_s', C.shared.n_s, 'n_k', C.shared.n_k, ...
-                        'pe', pe, 'save_tag', cfg.io.save_tag);
-                
-                    artfile = fullfile(artdir, sprintf('row_%04d.mat', rowi+1));
-                    if exist(artfile,'file')
-                        % enrich existing file instead of overwriting the richer content
-                        save(artfile, '-struct', 'artifact', '-append');
-                    else
-                        % first write for this row
-                        save(artfile, '-struct', 'artifact', '-v7.3');
-                    end
+                    artifact.sys_gray = configs{idxGray}.sys;     % linearSysDT
+                    artifact.sys_ddra = sys_true_dt;              % linearSysDT
+                    artifact.VAL      = VAL;  artifact.VAL.R0 = R0;  artifact.VAL.U  = U;
+                    artifact.W_eff    = W_used;                    % actually used in inference
+                    artifact.M_AB     = M_AB;
+                    artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
+                      'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
+                      'n_k', C.shared.n_k, 'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2);
+                    
+                    save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
 
                 end
                 
                 clear configs  % free Gray objects early
                 
                 % --- Pack row ---
+                % ensure percentages
+                if (ctrain_gray <= 1), ctrain_gray = 100*ctrain_gray; end
+                if (cval_gray   <= 1), cval_gray   = 100*cval_gray;   end
+                if (cval_ddra   <= 1), cval_ddra   = 100*cval_ddra;   end
+
                 rowi = rowi + 1;
                 row = pack_row(C, D, alpha_w, pe, ...
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...

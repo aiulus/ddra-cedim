@@ -54,9 +54,6 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys,
                      'contInput', contInput);
 
     for m = 1:n_m
-        if getfielddef(pe,'deterministic',true)
-            rng(10 + m,'twister');   % or any stable mapping of m
-        end
         [U_nom, diagPE] = genPEInput(pe.mode, pe.order, n_u, n_k, dt, U, pe_opts);
         if ~isempty(diagPE.message)
             fprintf('[PE] %s\n', diagPE.message);

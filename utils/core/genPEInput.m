@@ -33,7 +33,6 @@ function [U_nom, diagPE] = genPEInput(mode, L, n_u, n_k, dt, U_set, opts)
     end
 
     % ---- temporal bases S (L_eff x n_k) ---------------------------------
-    if det, rng(1234,'twister'); end
     switch lower(string(mode))
         case "sinwave"
             t  = (0:n_k-1)*dt;
@@ -49,7 +48,6 @@ function [U_nom, diagPE] = genPEInput(mode, L, n_u, n_k, dt, U_set, opts)
                 S(l,:) = sin(2*pi*f(l)*t + phi(l));
             end
         otherwise % 'randn'
-            if det, rng(5678,'twister'); end
             S = randn(L_eff, n_k);
     end
 
