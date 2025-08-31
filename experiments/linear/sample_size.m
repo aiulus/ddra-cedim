@@ -104,7 +104,7 @@ sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = [10];
 sweep_grid.n_s_list = 5;
 sweep_grid.n_k_list = 2:1:10;
-sweep_grid.pe_list = {struct('mode','randn','order',2,'deterministic',true,'strength',10)}; % keep excitation mode fixed
+sweep_grid.pe_list = { struct('mode','randn','strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
@@ -123,6 +123,9 @@ cfg.io.save_artifacts  = true;      % offline: keep .mat files for peeking/plott
 
 cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
 cfg.allow_parallel = false;  % keep serial
+
+cfg.shared.pe_min_policy = 'none';   % honor the L's in PE_orders exactly
+cfg.shared.pe_verbose    = true;     % (optional) show requested->effective L
 
 %% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);

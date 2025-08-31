@@ -106,6 +106,8 @@ cfg.io.save_artifacts  = true;      % offline: keep .mat files for peeking/plott
 cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
 cfg.allow_parallel = false;  % keep serial
 
+cfg.shared.pe_min_policy = 'none';   % honor the L's in PE_orders exactly
+cfg.shared.pe_verbose    = true;     % (optional) show requested->effective L
 
 % === NEW: get plots_dir once ===
 [plots_dir, ~] = init_io(cfg);

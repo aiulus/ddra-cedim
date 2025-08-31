@@ -54,9 +54,9 @@ cfg.shared.cs_base = struct( ...
 
 % Data budgets (fixed)
 cfg.shared.n_m     = 3;    % input traj count
-cfg.shared.n_s     = 20;   % samples per traj
-cfg.shared.n_k     = 4;    % horizon (train)
-cfg.shared.n_m_val = 2;    % val traj count
+cfg.shared.n_s     = 2;   % samples per traj
+cfg.shared.n_k     = 20;    % horizon (train)
+cfg.shared.n_m_val = 1;    % val traj count
 
 %cfg.shared.n_m     = 2;    % input traj count
 %cfg.shared.n_s     = 2;   % samples per traj
@@ -88,14 +88,14 @@ sweep_grid = struct();
 %sweep_grid.D_list = [2 3 4 5 6];       % dimensional scalability
 %sweep_grid.D_list = [2 3 4 5 6 7 8 9 10];
 sweep_grid.D_list = 2:2:10;
+sweep_grid.D_list = [1,2,3];
+sweep_grid.D_list = 7;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = cfg.shared.n_m;
 sweep_grid.n_s_list = cfg.shared.n_s;
 sweep_grid.n_k_list = cfg.shared.n_k;
 PE_orders = [4];
-sweep_grid.pe_list = [ ...
-    arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
-];
+sweep_grid.pe_list = { struct('mode','randn','strength',1,'deterministic',true) };
 
 
 % New: Memory efficiency toggles
@@ -121,6 +121,8 @@ cfg.io.save_artifacts  = true;      % offline: keep .mat files for peeking/plott
 cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
 cfg.allow_parallel = false;  % keep serial
 
+cfg.shared.pe_min_policy = 'none';   % honor the L's in PE_orders exactly
+cfg.shared.pe_verbose    = true;     % (optional) show requested->effective L
 
 %% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);

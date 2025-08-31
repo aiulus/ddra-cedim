@@ -59,12 +59,12 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % --- Build true systems ---
                 [sys_cora, sys_ddra, R0, U] = build_true_system(C);
                 use_noise   = resolve_use_noise(C.shared);
-                pe = finalize_pe_order(pe, sys_cora, C);
+                pe_eff = finalize_pe_order(pe, sys_cora, cfg);
                 % ================= DDRA =================
                 t0 = tic;
                 % NOTE: ddra_generate_data must return DATASET as 6th out:
                 % DATASET.x0_blocks{b}, DATASET.u_blocks{b} with block length n_k
-                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_ddra, sys_cora.dt, R0, U, pe);
+                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_ddra, sys_cora.dt, R0, U, pe_eff);
                 Tlearn = toc(t0);
     
                 % Build TRAIN and VAL suites deterministically from generator
@@ -110,7 +110,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
                 rng(row_seed+1,'twister');
-                [~,~,~,~,~, DATASET_val] = ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe);
+                [~,~,~,~,~, DATASET_val] = ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe_eff);
                 TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k);
     
                 % Learn M_AB

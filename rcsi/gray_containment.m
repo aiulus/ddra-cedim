@@ -1,82 +1,105 @@
 function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, C, pe, varargin)
+% GRAY_CONTAINMENT
+%   Containment on TRAIN and VAL using CORA's validateReach, with
+%   per-sample testCases to avoid y_a/zero-input fallback.
+
+    % ---- args ----
     p = inputParser;
     addParameter(p,'check_contain', true);
     addParameter(p,'externalTS_train',[]);
     addParameter(p,'externalTS_val',[]);
+    addParameter(p,'plot_settings',[]);     % optional, passed to validateReach
     parse(p, varargin{:});
-    TS_train_ext = p.Results.externalTS_train;
-    TS_val_ext   = p.Results.externalTS_val;
-    CC = p.Results.check_contain;
-
+    CC        = p.Results.check_contain;
+    TS_train  = p.Results.externalTS_train;
+    TS_val    = p.Results.externalTS_val;
+    PS        = p.Results.plot_settings;
+    
+    % ---- build test suites if not provided ----
     optTS = ts_options_from_pe(C, pe, sys_cora);
     optTS.stateSet = R0;
 
-    %params_true = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k-1));
-    %params_true.testSuite = createTestSuite(sys_cora, params_true, C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
-    %params_true.tFinal = sys_cora.dt*(C.shared.n_k_val-1);
-    %TS_val = createTestSuite(sys_cora, params_true, C.shared.n_k_val, C.shared.n_m_val, C.shared.n_s_val, optTS);
-
-    % ------------ NEW ------------
-    % TRAINING
-    if ~isempty(TS_train_ext)
-        TS_train = TS_train_ext;
-    else
-        params_true = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k-1));
-        TS_train = createTestSuite(sys_cora, params_true, C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
+    if isempty(TS_train)
+        p_train = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k-1));
+        TS_train = createTestSuite(sys_cora, p_train, C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
     end
-    
-    % VALIDATION
-    if ~isempty(TS_val_ext)
-        TS_val = TS_val_ext;
-    else
-        params_true = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k_val-1));
-        TS_val = createTestSuite(sys_cora, params_true, C.shared.n_k_val, C.shared.n_m_val, C.shared.n_s_val, optTS);
+    if isempty(TS_val)
+        p_val = struct('R0',R0,'U',U,'tFinal', sys_cora.dt*(C.shared.n_k_val-1));
+        TS_val = createTestSuite(sys_cora, p_val, C.shared.n_k_val, C.shared.n_m_val, C.shared.n_s_val, optTS);
     end
 
-    num_out = zeros(numel(configs),1); t0 = tic;
-    for m = 1:length(TS_val)
-        params_m = configs{2}.params;
-        params_m.R0 = params_m.R0 + TS_val{m}.initialState;
-        params_m.u  = TS_val{m}.u';
-        params_m.tFinal = configs{2}.sys.dt * (size(TS_val{m}.y,1)-1);
-    
-        % (A) pad inputs if needed (matches validateReach’s behavior)
-        diff_u = configs{2}.sys.nrOfInputs - size(params_m.u,1);
-        if diff_u ~= 0
-            params_m.u = cat(1, params_m.u, zeros(diff_u, size(params_m.u,2), size(params_m.u,3)));
-        end
-    
-        % (B) strip optimizer block from options before reach()
-        opt_no_cs = configs{2}.options;
-        if isfield(opt_no_cs,'cs'), opt_no_cs = rmfield(opt_no_cs,'cs'); end
-    
-        Rg = reach(configs{2}.sys, params_m, opt_no_cs);
-        Rg = Rg.timePoint.set;
-    
-        nk    = size(TS_val{m}.y,1);
-        dim_y = size(TS_val{m}.y,2);
-        for k = 1:nk
-            % robust slice: (dim_y × S)
-            yk = reshape(TS_val{m}.y(k,:,:), dim_y, []);
-            S  = size(yk,2);
-            for s = 1:S
-                if ~contains_interval(yk(:,s), Rg{k}, 1e-6)
-                    num_out_val = num_out_val + 1;
+    % ---- pick gray config index consistently ----
+    want = "graySeq";
+    i_gray = find(cellfun(@(cfg) isstruct(cfg) && isfield(cfg,'name') ...
+                          && want==string(cfg.name), configs), 1);
+    if isempty(i_gray), i_gray = min(2, numel(configs)); end
+
+    % ---- accumulate helpers ----
+    function [num_out_vec, num_all] = accum_suite(TS)
+        num_out_vec = zeros(numel(configs),1);
+        num_all = 0;
+        for m = 1:numel(TS)
+            tc = TS{m};
+            sysClass = class(sys_cora);
+            if size(tc.u,3) > 1
+                TCs = split_tc_samples(tc, sysClass);
+            else
+                TCs = {tc};
+            end
+            for s = 1:numel(TCs)
+                % delegate to CORA (strips cs, handles padding, plots if PS given)
+                if isempty(PS)
+                    [~, ev] = validateReach(TCs{s}, configs, CC);
+                else
+                    [~, ev] = validateReach(TCs{s}, configs, CC, PS);
                 end
-                num_all_val = num_all_val + 1;
+                num_out_vec = num_out_vec + ev.num_out;
+                % denominator = #time steps × #samples (here 1)
+                nk = size(TCs{s}.y,1);
+                ns = size(TCs{s}.y,3);  % 1 for single-sample tc
+                num_all = num_all + nk*ns;
             end
         end
     end
 
-    num_all_id = length(params_true.testSuite)*C.shared.n_k*size(params_true.testSuite{1}.y,3);
-    ctrain = 100*(1 - num_out(2)/max(1,num_all_id));
+    % ---- TRAIN ----
+    [num_out_tr, num_all_tr] = accum_suite(TS_train);
+    ctrain = 100*(1 - num_out_tr(i_gray)/max(1, num_all_tr));
 
-    num_out_val = zeros(numel(configs),1);
-    for m=1:length(TS_val)
-        [~, eval_val] = validateReach(TS_val{m}, configs, CC);
-        num_out_val = num_out_val + eval_val.num_out;
-    end
-    num_all_val = length(TS_val)*C.shared.n_k_val*size(TS_val{1}.y,3);
-    cval = 100*(1 - num_out_val(2)/max(1,num_all_val));
+    % ---- VAL (timed) ----
+    t0 = tic;
+    [num_out_val, num_all_val] = accum_suite(TS_val);
     Tval = toc(t0);
+    cval = 100*(1 - num_out_val(i_gray)/max(1, num_all_val));
+
+    % ---- VAL pack (optional, for downstream plotting outside CORA) ----
+    VAL = [];
+    try
+        VAL = pack_VAL_from_TS(TS_val); 
+    catch
+        % leave VAL = []
+    end
+end
+
+% ------ Helpers ------
+
+function TS1 = split_tc_samples(tc, sysClass)
+    S = size(tc.u,3);
+    TS1 = cell(1,S);
+    for s = 1:S
+        u_s = tc.u(:,:,s);   % (n_k × n_u)
+        y_s = tc.y(:,:,s);   % (n_k × n_y)
+        TS1{s} = testCase(y_s, u_s, tc.initialState, tc.sampleTime, sysClass);
+    end
+end
+
+function VAL = pack_VAL_from_TS(TS)
+% Minimal VAL pack: x0/u/y for first sample of each testcase
+    B = numel(TS);
+    VAL = struct('x0',{cell(1,B)},'u',{cell(1,B)},'y',{cell(1,B)});
+    for b = 1:B
+        VAL.x0{b} = TS{b}.initialState;
+        VAL.u{b}  = squeeze(TS{b}.u(:,:,1));   % (n_k × n_u)
+        VAL.y{b}  = squeeze(TS{b}.y(:,:,1));   % (n_k × n_y)
+    end
 end
