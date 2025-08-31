@@ -24,6 +24,14 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     % -------- Sweep axes & base config -----------------------------------
     [axes, baseC] = init_sweep_axes(cfg, grid);
+    % ---- PE policy: explicit for "pe_sweep", minimal otherwise unless forced ----
+    is_pe_sweep_tag = contains(lower(string(getfielddef(cfg.io,'save_tag',""))), 'pe_sweep');
+    has_forced = any(cellfun(@(p) isfield(p,'force_order') && p.force_order, axes.pe));
+    baseC.shared.pe_policy = getfielddef(baseC.shared,'pe_policy', ...
+        ternary(is_pe_sweep_tag || has_forced, "explicit", "minimal"));
+
+function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
+
 
     % Precompute for in-memory mode only
     if ~LM.append_csv
@@ -42,6 +50,16 @@ function SUMMARY = run_sweeps(cfg, grid)
             for n_k = axes.n_k
               for ip = 1:numel(axes.pe)
                 pe = axes.pe{ip};
+                % --- per-row deterministic seed (distinct datasets per sweep row) ---
+                row_index     = rowi + 1;             % the row we're about to produce
+                row_seed      = 10000 + row_index;    % any fixed offset is fine
+                C.shared.seed = row_seed;
+                rng(row_seed,'twister');
+            
+                % Make nominal PE input reproducible and L-dependent without freezing RNG
+                pe.deterministic = getfielddef(pe,'deterministic', true);
+                pe.seed_base = uint32(mod(100000 + 131*row_index + 977*ip + 1009*n_k + 7*n_s + 3*n_m, 2^31-1));
+
     
                 % --- instantiate config for this run ---
                 C = baseC;
@@ -58,8 +76,16 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % --- Build true systems ---
                 [sys_cora, sys_ddra, R0, U] = build_true_system(C);
+                % Zero-centered copy for CORA (deviation only)
+                c0 = center(R0);
+                G0 = R0.G;               
+                R0_cora = zonotope(zeros(size(c0)), G0);   % center = 0, keep same generators
+
                 use_noise   = resolve_use_noise(C.shared);
-                pe_eff = finalize_pe_order(pe, sys_cora, cfg);
+                % Respect policy: PEness -> explicit L; others -> minimal sufficient
+                C.shared.pe_policy = baseC.shared.pe_policy;   % carry into row config
+                pe_eff = finalize_pe_order(pe, sys_cora, C);   % pass C, not cfg
+
                 % ================= DDRA =================
                 t0 = tic;
                 % NOTE: ddra_generate_data must return DATASET as 6th out:
@@ -70,8 +96,15 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % Build TRAIN and VAL suites deterministically from generator
                 TS_train = testSuite_fromDDRA(sys_cora, R0, DATASET, C.shared.n_k);
 
-                Lgate = getfielddef(pe,'order_gate', getfielddef(pe,'order',2));
-                okPE  = check_PE_order(TS_train, Lgate);
+                if string(C.shared.pe_policy) == "explicit"
+                    % Gate on the requested order when sweeping PE explicitly
+                    Lgate = getfielddef(pe,'order_gate', getfielddef(pe,'order', pe_eff.order));
+                else
+                    % Gate on the effective minimal sufficient order
+                    Lgate = pe_eff.order;
+                end
+                okPE = check_PE_order(TS_train, Lgate);
+
                 if ~okPE
                     % mark and skip this row to keep the grid aligned
                     rowi = rowi + 1;
@@ -179,17 +212,21 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
                 t3 = tic;
-                configs = gray_identify(sys_cora, R0, U, C, pe, ...
+                configs = gray_identify(sys_cora, R0_cora, U, C, pe, ...
                     'overrideW', W_for_gray, ...
                     'options_testS', optTS, ...
                     'externalTS_train', TS_train, ...
                     'externalTS_val',   TS_val);  
                 Tlearn_g = toc(t3);
-
+                
                 want = "graySeq";
                 idxGray = find(arrayfun(@(c) isfield(c{1},'method') && want==string(c{1}.method), configs), 1, 'first');
                 if isempty(idxGray), idxGray = 1; end
 
+                %% Debug statements
+                fprintf("Center of R0 is:");
+                center(configs{idxGray}.params.R0)   
+                %% 
     
                 % Build VAL record (x0,u) from TS_val and pass to both sides
                 VAL = VAL_from_TS(TS_val, DATASET_val);
@@ -248,7 +285,27 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % ---- Gray validation on EXACT same points (contains_interval metric)
-                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL(configs, TS_train, TS_val, 1e-6);
+                % CORA's validateReach (internally splits multi-sample testCases)
+                do_plot = any(lower(string(getfielddef(cfg.io,'plot_mode','offline'))) == ["online","both"]);
+                ps_args = {};
+                if do_plot
+                    PS = struct();
+                    % Optional: thin the workload
+                    % PS.k_plot = 1:cfg.io.plot_every_k:C.shared.n_k_val; 
+                    % PS.dims   = getfielddef(cfg.io,'plot_dims',[1 2]);
+                    ps_args = {'plot_settings', PS};
+                else
+                    % IMPORTANT: pass [] to suppress plotting
+                    ps_args = {'plot_settings', []};
+                end
+                
+                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
+                    configs, sys_cora, R0_cora, U, C, pe_eff, ...
+                    'externalTS_train', TS_train, ...
+                    'externalTS_val',   TS_val,   ...
+                    'check_contain',    true,     ...
+                    ps_args{:});
+
               
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
@@ -282,7 +339,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
                 sizeI_gray = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
-                                    configs{idxGray}.params, 'overrideW', W_for_gray);
+                    configs{idxGray}.params, 'overrideW', W_for_gray);
+
                 Tinfer_g   = toc(t4);
                 
                 % --- Optional: save plotting artifact for this row ---

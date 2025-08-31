@@ -56,7 +56,10 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys,
                      'contInput', contInput);
 
     for m = 1:n_m
+        rng_guard = rng;                    % save global RNG
         [U_nom, diagPE] = genPEInput(pe.mode, pe.order, n_u, n_k, dt, U, pe_opts);
+        rng(rng_guard);                     % restore global RNG immediately
+
         if ~isempty(diagPE.message)
             fprintf('[PE] %s\n', diagPE.message);
         end
