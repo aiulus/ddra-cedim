@@ -1,9 +1,11 @@
 function [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment_on_VAL(configs, TS_train, TS_val, tol)
     if nargin < 4 || isempty(tol), tol = 1e-6; end
 
-    % pick gray config
-    i_gray = min(2, numel(configs));  % 2 if available, else 1
+    % pick gray config (by name, if present)
+    i_gray = find(cellfun(@(c) isfield(c,'name') && strcmpi(c.name,'graySeq'), configs),1,'first');
+    if isempty(i_gray), i_gray = min(2, numel(configs)); end
     cfg = configs{i_gray};
+
 
     % strip cs from options
     if isfield(cfg,'options') && isfield(cfg.options,'cs')

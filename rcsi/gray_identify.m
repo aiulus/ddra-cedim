@@ -81,16 +81,6 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
             C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
     end
 
-    % ---- OPTIONAL: fold W_override into inputs for identification ----
-    if ~isempty(W_override) && hasGenerators(W_override)
-        % Augment inputs with disturbance channels for identification
-        U_aug = cartProd(U, W_override);
-        % true params (only for potential plotting)
-        params_true.U   = U_aug;
-        % identification params
-        params_id_init.U = zonotope([center(U_aug), eye(dim(U_aug))]);
-    end
-
     % ---- conformance options ----
     options      = C.shared.options_reach;
     options.cs   = C.shared.cs_base;

@@ -70,7 +70,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % Build TRAIN and VAL suites deterministically from generator
                 TS_train = testSuite_fromDDRA(sys_cora, R0, DATASET, C.shared.n_k);
 
-                okPE = check_PE_order(TS_train, pe.order);
+                Lgate = getfielddef(pe,'order_gate', getfielddef(pe,'order',2));
+                okPE  = check_PE_order(TS_train, Lgate);
                 if ~okPE
                     % mark and skip this row to keep the grid aligned
                     rowi = rowi + 1;
@@ -264,7 +265,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                     wid_ddra = cellfun(@(Z) sum(abs(generators(Z)), 'all'), Ysets_ddra);
                     sizeI_ddra = mean(wid_ddra(:));
                     % Containment should also be done in output-space:
-                    cval_ddra = contains_on_VAL_linear(sys_true_dt, W_used, Ysets_ddra, VAL);  % ensure this checks y in Y-set
+                    %cval_ddra = contains_on_VAL_linear(sys_true_dt, W_used, Ysets_ddra, VAL);  
+                    cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, 1e-6);
 
                     clear Xsets_ddra
                 else

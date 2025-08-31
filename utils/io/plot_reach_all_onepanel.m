@@ -56,11 +56,9 @@ function plot_reach_all_onepanel(sys_true, sys_gray, VAL, varargin)
     options = struct('zonotopeOrder', opt.Order, 'verbose', false);
 
     % ----- TRUE REACH -----
-    paramsT = struct();
-    paramsT.tStart = 0; paramsT.tFinal = sys_true.dt * (n_k-1);
-    paramsT.R0     = R0_set + x0;     % exact initial uncertainty + nominal x0
-    paramsT.U      = U_set;           % exact input uncertainty
-    paramsT.u      = u.';             % CORA wants (n_k × m)
+    paramsT = struct('tStart',0,'tFinal',sys_true.dt*(n_k-1));
+    paramsT.R0 = R0_set + x0;
+    paramsT.u  = u.';   
     Rtrue = reach(sys_true, paramsT, options);
     Xtrue = Rtrue.timePoint.set;
     % map to outputs: y = Cx + D u_k

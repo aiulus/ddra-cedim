@@ -1,17 +1,28 @@
 function [Xsets, sizeI] = ddra_infer(sys, R0, U, W, M_AB, C, varargin)
 % DDRA_INFER  Stored-sets propagation.
-% Signature unchanged; extra arg (VAL) is accepted & ignored.
+% If VAL is provided and contains u, uses deterministic inputs per step.
+    K  = red_order(C);           nk = C.shared.n_k;
+    Xsets = cell(nk,1); Xk = R0; sizeI = 0;
 
-    K  = red_order(C);
-    nk = C.shared.n_k;
+    % detect deterministic VAL.u
+    VAL = []; if ~isempty(varargin), VAL = varargin{1}; end
+    hasVAL = isstruct(VAL) && isfield(VAL,'u') && ~isempty(VAL.u);
 
-    Xsets = cell(nk,1);
-    Xk = R0; 
-    sizeI = 0;
+    if hasVAL
+        % single-block convenience: use first block in VAL
+        if iscell(VAL.u), Useq = VAL.u{1}; else, Useq = VAL.u; end  % (n_k×m) or (m×n_k)
+        if size(Useq,2) == size(sys.B,2) && size(Useq,1) ~= nk, Useq = Useq.'; end
+    end
 
     for k = 1:nk
-        Xk    = reduce(Xk,'girard',K);
-        Xnext = M_AB * cartProd(Xk, U) + W;
+        Xk = reduce(Xk,'girard',K);
+        if hasVAL
+            u_k = Useq(min(k,size(Useq,1)),:).';
+            Ueff = zonotope(u_k);                 % deterministic per step
+        else
+            Ueff = U;                             % legacy: uncertain input set
+        end
+        Xnext = M_AB * cartProd(Xk, Ueff) + W;
         Xnext = reduce(Xnext,'girard',K);
         Xsets{k} = Xnext;
         sizeI = sizeI + sum(abs(generators(Xnext)),'all');
@@ -19,44 +30,3 @@ function [Xsets, sizeI] = ddra_infer(sys, R0, U, W, M_AB, C, varargin)
     end
 end
 
-
-% ------------------------ helpers (local) --------------------------------
-function u_k = val_get_u_k(VAL, k, nk, dim_u)
-    % Try the most explicit schema first: u_blocks{b} is [n_k x dim_u]
-    if isfield(VAL,'u_blocks') && ~isempty(VAL.u_blocks) && ~isempty(VAL.u_blocks{1})
-        Ublk = VAL.u_blocks{1};
-        % allow longer blocks; clip if needed
-        k_eff = min(k, size(Ublk,1));
-        u_k = Ublk(k_eff,:).';  % column
-        return
-    end
-
-    % Fallback: VAL.u either [n_k x dim_u] or [dim_u x n_k] or 3D
-    if isfield(VAL,'u') && ~isempty(VAL.u)
-        Uraw = VAL.u;
-        sz = size(Uraw);
-        if numel(sz) == 2
-            if sz(1) == nk && sz(2) == dim_u
-                u_k = Uraw(min(k,sz(1)),:).';
-                return
-            elseif sz(2) == nk && sz(1) == dim_u
-                u_k = Uraw(:,min(k,sz(2)));
-                return
-            end
-        elseif numel(sz) == 3
-            % Common shapes: [n_k x dim_u x n_cases] or [dim_u x n_k x n_cases]
-            if sz(1) == nk && sz(2) == dim_u
-                u_k = Uraw(min(k,sz(1)),:,1).';
-                return
-            elseif sz(2) == nk && sz(1) == dim_u
-                u_k = Uraw(:,min(k,sz(2)),1);
-                return
-            end
-        end
-    end
-
-    % Last resort: use the *center* of U (keeps old behavior)
-    warning('ddra_infer:VALshape',...
-        'VAL provided but no recognizable u-sequence; falling back to center(U).');
-    u_k = center(U);
-end

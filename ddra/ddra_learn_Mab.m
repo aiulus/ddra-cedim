@@ -48,7 +48,7 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
 
         % Ridge
         Zpinv_ridge = Z' / (Z*Z' + lambda * eye(n_rows));  % (n_cols x n_rows)
-        M_AB = X1W * (Zpinv_ridge');                       % as matZonotope*numeric
+        M_AB = X1W * Zpinv_ridge;
 
         % Uncertainty inflation proportional to λ * ||Z^†||_2
         kappa = norm(Zpinv_ridge, 2);                      % proxy for ||Z^†||
@@ -86,7 +86,7 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
                 Mw2 = build_Mw_matrix_zonotope(W_out, size(sys.A,1), size(Xplus,2));
                 X1W2_center = Xplus - Mw2.center;
                 X1W2        = matZonotope(X1W2_center, Mw2.G);
-                M_AB        = X1W2 * (Zpinv_ridge');
+                M_AB        = X1W2 * Zpinv_ridge;
 
             otherwise
                 warning('DDRA:RidgePolicy','Unknown ridge_policy "%s"; defaulting to MAB.', ridge_policy);
