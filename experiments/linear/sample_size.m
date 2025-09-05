@@ -135,82 +135,108 @@ SUMMARY = ensure_time_totals(SUMMARY);
 disp([SUMMARY.cval_gray SUMMARY.cval_ddra])
 disp([SUMMARY.sizeI_gray SUMMARY.sizeI_ddra])
 
-%% ---------- Visualization: 4 panels (total / learn / validation / inference) ----------
-x = coerce_numeric(SUMMARY.n_k);
-colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
+%% ---------- Visualization: auto-detect axis (n_m / n_k / n_s) ----------
+% Which axis varies?
+vary_nm = numel(unique(sweep_grid.n_m_list)) > 1;
+vary_nk = numel(unique(sweep_grid.n_k_list)) > 1;
+vary_ns = numel(unique(sweep_grid.n_s_list)) > 1;
+assert(sum([vary_nm,vary_nk,vary_ns])==1, ...
+    'Expected exactly one of n_m, n_k, n_s to vary.');
 
+if vary_nm
+    var_axis = 'n_m';
+    x        = coerce_numeric(SUMMARY.n_m);
+    xlab     = 'n_m (distinct input trajectories)';
+    lg_info  = sprintf('(n_k=%g, n_s=%g)', sweep_grid.n_k_list(1), sweep_grid.n_s_list(1));
+elseif vary_nk
+    var_axis = 'n_k';
+    x        = coerce_numeric(SUMMARY.n_k);
+    xlab     = 'n_k (trajectory length)';
+    lg_info  = sprintf('(n_m=%g, n_s=%g)', sweep_grid.n_m_list(1), sweep_grid.n_s_list(1));
+else
+    var_axis = 'n_s';
+    x        = coerce_numeric(SUMMARY.n_s);
+    xlab     = 'n_s (samples per trajectory)';
+    lg_info  = sprintf('(n_m=%g, n_k=%g)', sweep_grid.n_m_list(1), sweep_grid.n_k_list(1));
+end
+
+% Header bits: system, dimension, PE-order
+sys_name = char(cfg.shared.dyn);
+D        = sweep_grid.D_list(1);
+L = NaN;
+try
+    if iscell(sweep_grid.pe_list),  L = sweep_grid.pe_list{1}.order; end
+    if isstruct(sweep_grid.pe_list) && isfield(sweep_grid.pe_list,'order')
+        L = sweep_grid.pe_list(1).order;
+    end
+catch, end
+hdr = sprintf('%s (D=%d, PE-order=%g)', sys_name, D, L);
+
+% Colors & label tag
+colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
+ddra_lbl = ['DDRA ' lg_info];
+rcsi_lbl_full = ['RCSI-' rcsi_lbl ' ' lg_info];
+
+%% ---------- Runtime panels (total / learn / validation / inference) ----------
 f = figure('Name','Runtime panels','Color','w');
 tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
 
 % 1) TOTAL
-nexttile; hold on;
-plot(x, SUMMARY.t_ddra_total, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x, SUMMARY.t_gray_total, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
-     'DisplayName', ['RCSI-' rcsi_lbl]);
-xlabel('n_k (number of input trajectories)'); ylabel('Seconds');
-title(['Total runtime vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+nexttile; hold on; grid on;
+plot(x, SUMMARY.t_ddra_total, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName',ddra_lbl);
+plot(x, SUMMARY.t_gray_total, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName',rcsi_lbl_full);
+xlabel(xlab); ylabel('Seconds');
+title(sprintf('%s — Total runtime vs %s', hdr, var_axis)); legend('Location','best');
 
 % 2) LEARNING
-nexttile; hold on;
-plot(x, SUMMARY.t_ddra_learn, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA learn');
-plot(x, SUMMARY.t_gray_learn, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
-     'DisplayName', ['RCSI-' rcsi_lbl ' learn']);
-xlabel('n_m'); ylabel('Seconds');
-title(['Learning runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+nexttile; hold on; grid on;
+plot(x, SUMMARY.t_ddra_learn, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName',ddra_lbl);
+plot(x, SUMMARY.t_gray_learn, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName',rcsi_lbl_full);
+xlabel(xlab); ylabel('Seconds');
+title(sprintf('%s — Learning runtime', hdr)); legend('Location','best');
 
 % 3) VALIDATION
-nexttile; hold on;
-plot(x, SUMMARY.t_ddra_check, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA check');
-plot(x, SUMMARY.t_gray_val,   '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
-     'DisplayName', ['RCSI-' rcsi_lbl ' validate']);
-xlabel('n_m'); ylabel('Seconds');
-title(['Validation / Check runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+nexttile; hold on; grid on;
+plot(x, SUMMARY.t_ddra_check, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName',ddra_lbl);
+plot(x, SUMMARY.t_gray_val,   '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName',rcsi_lbl_full);
+xlabel(xlab); ylabel('Seconds');
+title(sprintf('%s — Validation/Check runtime', hdr)); legend('Location','best');
 
 % 4) INFERENCE
-nexttile; hold on;
-plot(x, SUMMARY.t_ddra_infer, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA infer');
-plot(x, SUMMARY.t_gray_infer, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
-     'DisplayName', ['RCSI-' rcsi_lbl ' infer']);
-xlabel('n_m'); ylabel('Seconds');
-title(['Inference runtime  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+nexttile; hold on; grid on;
+plot(x, SUMMARY.t_ddra_infer, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName',ddra_lbl);
+plot(x, SUMMARY.t_gray_infer, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName',rcsi_lbl_full);
+xlabel(xlab); ylabel('Seconds');
+title(sprintf('%s — Inference runtime', hdr)); legend('Location','best');
 
-% Save with method in filename
 [plots_dir, ~] = init_io(cfg);
-save_plot(f, plots_dir, ['runtime_panels_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
+save_plot(f, plots_dir, sprintf('runtime_panels_vs_%s_%s', var_axis, rcsi_lbl), ...
+    'Formats', {'png','pdf'}, 'Resolution', 200);
 
-% -------- Fidelity / Conservatism panels (vs n_m) --------
-x_nk        = coerce_numeric(SUMMARY.n_k);
-cval_ddra   = coerce_numeric(SUMMARY.cval_ddra);
-cval_gray   = coerce_numeric(SUMMARY.cval_gray);
-sizeI_ddra  = coerce_numeric(SUMMARY.sizeI_ddra);
-sizeI_gray  = coerce_numeric(SUMMARY.sizeI_gray);
+%% ---------- Fidelity / Conservatism panels ----------
+cval_ddra  = coerce_numeric(SUMMARY.cval_ddra);
+cval_gray  = coerce_numeric(SUMMARY.cval_gray);
+sizeI_ddra = coerce_numeric(SUMMARY.sizeI_ddra);
+sizeI_gray = coerce_numeric(SUMMARY.sizeI_gray);
 
 f2 = figure('Name','Fidelity & Conservatism','Color','w');
 tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
 
 % (1) Fidelity
-nexttile; hold on;
-plot(x_nk, cval_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x_nk, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
-     'DisplayName', ['RCSI-' rcsi_lbl]);
-xlabel('n_k (trajectory length)'); ylabel('Containment on validation (%)');
-title(['Fidelity vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+nexttile; hold on; grid on;
+plot(x, cval_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName',ddra_lbl);
+plot(x, cval_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName',rcsi_lbl_full);
+xlabel(xlab); ylabel('Containment on validation (%)');
+title(sprintf('%s — Fidelity vs %s', hdr, var_axis)); legend('Location','best');
 
 % (2) Conservatism
-nexttile; hold on;
-plot(x_nk, sizeI_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName','DDRA');
-plot(x_nk, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, ...
-     'DisplayName', ['RCSI-' rcsi_lbl]);
-xlabel('n_k (trajectory length)'); ylabel('Aggregated interval size (proxy)');
-title(['Conservatism vs n_k  (RCSI: ' rcsi_lbl ')']); grid on; legend('Location','best');
+nexttile; hold on; grid on;
+plot(x, sizeI_ddra, '-o', 'Color',colors.ddra, 'LineWidth',1.6, 'DisplayName',ddra_lbl);
+plot(x, sizeI_gray, '-s', 'Color',colors.gray, 'LineWidth',1.6, 'DisplayName',rcsi_lbl_full);
+xlabel(xlab); ylabel('Aggregated interval size (proxy)');
+title(sprintf('%s — Conservatism vs %s', hdr, var_axis)); legend('Location','best');
 
-% Save with method in filename
-[plots_dir, ~] = init_io(cfg);
-save_plot(f2, plots_dir, ['fidelity_conservatism_vs_nm_' rcsi_lbl], 'Formats', {'png','pdf'}, 'Resolution', 200);
+save_plot(f2, plots_dir, sprintf('fidelity_conservatism_vs_%s_%s', var_axis, rcsi_lbl), ...
+    'Formats', {'png','pdf'}, 'Resolution', 200);
 
 close all force
-
-%[~, results_dir] = init_io(cfg);
-%art = fullfile(results_dir,'artifacts','row_0001.mat');  % pick any row you like
-%reachset_panel_plot(art, 'Dims',[1 2], 'Every',1, 'Order',50, ...
-%    'Title','True vs RCSI/Gray vs DDRA (VAL)');
