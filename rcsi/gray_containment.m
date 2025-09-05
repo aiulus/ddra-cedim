@@ -48,11 +48,8 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
             end
             for s = 1:numel(TCs)
                 % delegate to CORA (strips cs, handles padding, plots if PS given)
-                if isempty(PS)
-                    [~, ev] = validateReach(TCs{s}, configs, CC);
-                else
-                    [~, ev] = validateReach(TCs{s}, configs, CC, PS);
-                end
+                [~, ev] = validateReach(TCs{s}, configs, CC);        
+                close all;
                 num_out_vec = num_out_vec + ev.num_out;
                 % denominator = #time steps × #samples (here 1)
                 nk = size(TCs{s}.y,1);
@@ -71,6 +68,7 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
     [num_out_val, num_all_val] = accum_suite(TS_val);
     Tval = toc(t0);
     cval = 100*(1 - num_out_val(i_gray)/max(1, num_all_val));
+    
 
     % ---- VAL pack (optional, for downstream plotting outside CORA) ----
     VAL = [];

@@ -20,7 +20,7 @@ function R = conformance_gray(lookup, conf_opts)
     %   R: results from validateReach (containment stats + plots)
     %
     % Notes:
-    %   - Falls back to white-box if p_true is empty and you only want to size U’s center.
+    %   - Falls back to white-box if p_true is empty and you only want to size U's center.
     %
     % Adapted from: example_nonlinearSysDT_conform_02_gray.m (CORA Toolbox)
     % Authors:       Laura Luetzow
@@ -92,7 +92,7 @@ function R = conformance_gray(lookup, conf_opts)
     options.cs.p0 = 0.01*randn(dim_p + sys.nrOfInputs, 1);
     options.cs.set_p = @(p,params) aux_set_p_gray(p, params, dyn, sys);
     
-    % “Configs” container as in CORA examples
+    % "Configs" container as in CORA examples
     configs = cell(numel(methodsGray) + 1,1);
     configs{1}.sys     = sys;
     configs{1}.params  = rmfield(params_true,'testSuite');
@@ -121,14 +121,35 @@ function R = conformance_gray(lookup, conf_opts)
     
     % ---- Validation & Visualization ----
     % Identification containment sanity-check on training data
-    num_out = 0; 
-    check_contain = getfieldwithdefault(conf_opts, 'check_contain', true); % Takes forever if set to 1
+    % ---- Validation & Visualization ----
+    % Identification containment sanity-check on training data
+    check_contain = getfieldwithdefault(conf_opts, 'check_contain', true);
     methodsList = ["true", methodsGray];
-    for m=1:length(params_true.testSuite)
-        [~, eval_id] = validateReach(params_true.testSuite{m}, configs, check_contain);
-        num_out = num_out + eval_id.num_out;
+    
+    isLinear = isa(sys,'linearSysDT') || isa(sys,'linearARX');
+    
+    if isLinear
+        % Combine the whole training suite into one testCase
+        tc_id = params_true.testSuite{1};
+        for m = 2:numel(params_true.testSuite)
+            tc_id = tc_id.combineTestCases(params_true.testSuite{m});
+        end
+        % Headless by default for ID check (no popups)
+        [~, eval_id] = validateReach(tc_id, configs, check_contain);
+   
+        num_out = eval_id.num_out;                          % 1×(#configs)
+        num_all = n_k * size(tc_id.y, 3);                   % (#steps)×(#traj)
+    else
+        % Nonlinear fallback: keep per-case, but headless to avoid popups
+        num_out = zeros(1, numel(configs));
+        num_all = 0;
+        for m = 1:length(params_true.testSuite)
+            [~, eval_id] = validateReach(params_true.testSuite{m}, configs, check_contain);
+            num_out = num_out + eval_id.num_out;
+            num_all = num_all + n_k * size(params_true.testSuite{m}.y,3);
+        end
     end
-    num_all = length(params_true.testSuite)*n_k*size(params_true.testSuite{1}.y,3);
+
     fprintf("IDENTIFICATION DATA:\n");
     for i = 1:length(configs)
         p_contained = 100 - (num_out(i)/num_all)*100;
@@ -142,13 +163,31 @@ function R = conformance_gray(lookup, conf_opts)
     plot_settings.plot_Yp = false;
     plot_settings.dims    = [1 2];
     plot_settings.name    = sprintf("Gray-Box Conformance: %s", dyn);
+    if ~isfield(plot_settings,'k_plot'), plot_settings.k_plot = []; end
     
-    num_out = 0; check_contain = getfieldwithdefault(conf_opts, 'check_contain', true); %% Takes forever
-    for m=1:length(testSuite_val)
-        [R, eval_val] = validateReach(testSuite_val{m}, configs, check_contain, plot_settings);
-        num_out = num_out + eval_val.num_out;
+    check_contain = getfieldwithdefault(conf_opts, 'check_contain', true);
+    
+    if isLinear
+        % Single validateReach call for the whole validation suite
+        tc_val = testSuite_val{1};
+        for i = 2:numel(testSuite_val)
+            tc_val = tc_val.combineTestCases(testSuite_val{i});
+        end
+        [R, eval_val] = validateReach(tc_val, configs, check_contain, plot_settings);
+        num_out = eval_val.num_out;                      % 1×(#configs)
+        num_all = n_k_val * size(tc_val.y, 3);
+    else
+        % Nonlinear fallback: per-case, but still just one figure per case if plotting
+        num_out = zeros(1, numel(configs));
+        num_all = 0;
+        for i = 1:length(testSuite_val)
+            [R, eval_val] = validateReach(testSuite_val{i}, configs, check_contain, plot_settings);
+            num_out = num_out + eval_val.num_out;
+            num_all = num_all + n_k_val * size(testSuite_val{i}.y,3);
+        end
     end
-    num_all = length(testSuite_val)*n_k_val*size(testSuite_val{1}.y,3);
+
+    
     fprintf("VALIDATION DATA:\n");
     for i = 1:length(configs)
         p_contained = 100 - (num_out(i)/num_all)*100;

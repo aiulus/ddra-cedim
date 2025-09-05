@@ -66,12 +66,12 @@ cfg.shared.cs_base = struct( ...
 
 % Data budgets (fixed)
 cfg.shared.n_m = 10;    % input traj count
-cfg.shared.n_s = 2;   % samples per traj
-cfg.shared.n_k = 4;    % horizon (train)
-cfg.shared.n_m_val = 2;    % val traj count
+cfg.shared.n_s = 5;   % samples per traj
+cfg.shared.n_k = 10;    % horizon (train)
 
-cfg.shared.n_s_val = 1;
-cfg.shared.n_k_val = 1;
+cfg.shared.n_m_val = 5;    % val traj count
+cfg.shared.n_s_val = 5;
+cfg.shared.n_k_val = 5;
 
 % DDRA noise setup (fixed)
 cfg.ddra = struct();
@@ -101,10 +101,11 @@ sweep_grid = struct();
 sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 %sweep_grid.n_m_list = [2 4 8 16 32 64 128];
-sweep_grid.n_m_list = 10;
+sweep_grid.n_m_list = 2:2:20;
 sweep_grid.n_s_list = 5;
-sweep_grid.n_k_list = 2:2:20;
-sweep_grid.pe_list = { struct('mode','randn','strength',1,'deterministic',true) };
+%sweep_grid.n_k_list = 2:2:20;
+sweep_grid.n_k_list = 10;
+sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();

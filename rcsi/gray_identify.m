@@ -29,14 +29,15 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     end
 
     % ---- optional wrapper hook (kept as-is) ----
+
     try
-        LM      = C.lowmem;
-        ccflag  = true; 
-        if isfield(LM,'gray_check_contain'), ccflag = LM.gray_check_contain; end
+        % inside gray_identify, before calling conformance_gray
         conf_opts = struct('options_reach', C.shared.options_reach, ...
                            'cs',            C.shared.cs_base, ...
                            'testS',         optTS, ...
-                           'check_contain', ccflag);
+                           'check_contain', C.lowmem.gray_check_contain, ...
+                           'plot_settings', struct('k_plot', []));   % << key
+
         if ~isempty(W_override), conf_opts.W = W_override; end
         lookup = struct('sys',sys_cora,'dyn',C.shared.dyn,'R0',R0,'U',U, ...
                         'n_m',C.shared.n_m,'n_s',C.shared.n_s,'n_k',C.shared.n_k, ...
@@ -72,7 +73,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
                 'externalTS_train must contain CORA testCase objects.');
             params_id_init.testSuite = TS_train_ext;
         end
-        % For plotting/sanity “true” config doesn’t need the suite:
+        % For plotting/sanity "true" config doesn't need the suite:
         params_true = rmfield_safe(params_true,'testSuite');
     else
         % Fallback to CORA-generated suite (same PE settings)

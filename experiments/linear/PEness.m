@@ -44,12 +44,12 @@ cfg.shared.options_reach = struct('zonotopeOrder',100,'tensorOrder',2,'errorOrde
 cfg.shared.cs_base = struct('robustnessMargin',1e-9,'verbose',false,'cost',"interval",'constraints',"half");
 
 % Data budgets
-cfg.shared.n_m = 3; 
-cfg.shared.n_s = 2;  
-cfg.shared.n_k = 20;
-cfg.shared.n_m_val = 2; 
-cfg.shared.n_s_val = cfg.shared.n_s; 
-cfg.shared.n_k_val = cfg.shared.n_k;
+cfg.shared.n_m = 10; 
+cfg.shared.n_s = 10;  
+cfg.shared.n_k = 10;
+cfg.shared.n_m_val = 5; 
+cfg.shared.n_s_val = 5; 
+cfg.shared.n_k_val = 5;
 
 % DDRA noise
 cfg.ddra = struct('eta_w',1,'alpha_w',0.01);
@@ -78,9 +78,10 @@ sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;
 sweep_grid.n_k_list      = cfg.shared.n_k;
 PE_orders = [1 2 3 4 5 6 7 8 9 10];
-%PE_orders = [1 2];
+PE_orders = [3 4 5 6 7 8];
+PE_orders = [3 4 5];
 sweep_grid.pe_list = [ ...
-    arrayfun(@(L) struct('mode','sinWave','order',L,'strength',100,'deterministic',true), PE_orders, 'uni',0) ...
+    arrayfun(@(L) struct('mode','sinWave','order',L,'strength',1,'deterministic',true), PE_orders, 'uni',0) ...
 ];
 
 % New: Memory efficiency toggles
@@ -96,7 +97,7 @@ cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 
 % --- plotting mode + knobs
-cfg.io.plot_mode     = "offline";   % "online" | "offline" | "both"
+cfg.io.plot_mode     = "online";   % "online" | "offline" | "both"
 cfg.io.make_reach_plot = true;      % online: produce figures during run
 cfg.io.plot_rows       = [1];       % which sweep rows to plot 
 cfg.io.plot_dims       = [1 2];     % output dims
@@ -117,6 +118,7 @@ SUMMARY = run_sweeps(cfg, sweep_grid);
 % --- Plots: fidelity/conservatism vs PE order, per shape
 f1 = figure; tiledlayout(1,2); 
 isRandn = strcmp(SUMMARY.pe_mode,'randn');
+
 isSin   = strcmp(SUMMARY.pe_mode,'sinWave');
 
 nexttile; hold on; grid on; title('Fidelity vs PE order');
