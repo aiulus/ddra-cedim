@@ -126,35 +126,9 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 if ~okPE
                     % mark and skip this row to keep the grid aligned
-                    rowi = rowi + 1;
-                    row = pack_row(C, D, alpha_w, pe, ...
-                        NaN, NaN, NaN, NaN, NaN, ...
-                        Zinfo.rankZ, Zinfo.condZ, ...
-                        Tlearn, NaN, NaN, NaN, NaN, NaN);
-                    row.skipped      = true;
-                    row.skip_reason  = "PE_not_satisfied";
-                    row.use_noise    = resolve_use_noise(C.shared);
-                
-                    % --- write row ---
-                    if rowi == 1
-                        hdr = fieldnames(orderfields(row))';
-                        if LM.append_csv
-                            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
-                        else
-                            cells = cell(Ntot, numel(hdr));
-                        end
-                    end
-                    if LM.append_csv
-                        append_row_csv(csv_path, hdr, row);
-                    else
-                        for j = 1:numel(hdr)
-                            v = row.(hdr{j}); if isstring(v), v = char(v); end
-                            cells{rowi, j} = v;
-                        end
-                    end
-                
-                    clear TS_train DATASET  
-                    continue;               % skip to next sweep point
+                    emit_skip_row("PE_not_satisfied");
+                    clear TS_train DATASET
+                    continue; % skip to next sweep point
                 end
     
                 C_val = C;
@@ -185,72 +159,24 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % Fairness: if ridge would inflate MAB and we're not mirroring it into Gray, skip row for both
                 if isfield(ridgeInfo,'used') && ridgeInfo.used && ...
                    isfield(ridgeInfo,'policy') && string(ridgeInfo.policy)=="inflate_MAB"
-                    rowi = rowi + 1;
-                    row = pack_row(C, D, alpha_w, pe, ...
-                        NaN, NaN, NaN, NaN, NaN, ...
-                        Zinfo.rankZ, Zinfo.condZ, ...
-                        Tlearn, NaN, NaN, NaN, NaN, NaN);
-                    row.skipped       = true;
-                    row.skip_reason   = "ridge_inflate_MAB_unmirrored";
-                    row.use_noise     = resolve_use_noise(C.shared);
-                    row.ddra_ridge    = true; row.ddra_lambda = ridgeInfo.lambda;
-                    row.ddra_kappa    = ridgeInfo.kappa; row.ddra_ridge_policy = char(ridgeInfo.policy);
-                
-                    % write row (same as your existing skip path)
-                    if rowi == 1
-                        hdr = fieldnames(orderfields(row))';
-                        if LM.append_csv
-                            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
-                        else
-                            cells = cell(Ntot, numel(hdr));
-                        end
-                    end
-                    if LM.append_csv
-                        append_row_csv(csv_path, hdr, row);
-                    else
-                        for j = 1:numel(hdr)
-                            v = row.(hdr{j}); if isstring(v), v = char(v); end
-                            cells{rowi, j} = v;
-                        end
-                    end
+                    emit_skip_row("ridge_inflate_MAB_unmirrored", ...
+                        'ddra_ridge',true, ...
+                        'ddra_lambda',ridgeInfo.lambda, ...
+                        'ddra_kappa',ridgeInfo.kappa, ...
+                        'ddra_ridge_policy',char(ridgeInfo.policy));
                     clear Xminus Xplus TS_train TS_val DATASET DATASET_val
                     continue;
+
                 end
 
                 
                 % If rank-deficient and allow_ridge = false, skip this sweep point
                 if isfield(ridgeInfo,'skipped') && ridgeInfo.skipped
-                    rowi = rowi + 1;
-                    row = pack_row(C, D, alpha_w, pe, ...
-                        NaN, NaN, NaN, NaN, NaN, ...
-                        Zinfo.rankZ, Zinfo.condZ, ...
-                        Tlearn, Tcheck, NaN, NaN, NaN, NaN);
-                    row.skipped        = true;
-                    row.ddra_ridge     = false;
-                    row.ddra_lambda    = 0;
-                    row.ddra_kappa     = NaN;
-                    row.ddra_ridge_policy = "skip";
-                    row.use_noise      = use_noise;
-                
-                    % --- write row ---
-                    if rowi == 1
-                        hdr = fieldnames(orderfields(row))';
-                        if LM.append_csv
-                            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
-                        else
-                            cells = cell(Ntot, numel(hdr));
-                        end
-                    end
-                    if LM.append_csv
-                        append_row_csv(csv_path, hdr, row);
-                    else
-                        for j = 1:numel(hdr)
-                            v = row.(hdr{j}); if isstring(v), v = char(v); end
-                            cells{rowi, j} = v;
-                        end
-                    end
-                
-                    % Skip inference (and optionally Gray) to keep grid aligned
+                    emit_skip_row("skip", ...
+                        'ddra_ridge',false, ...
+                        'ddra_lambda',0, ...
+                        'ddra_kappa',NaN, ...
+                        'ddra_ridge_policy',"skip");
                     clear Xminus Xplus TS_train TS_val DATASET DATASET_val
                     continue;
                 end
@@ -269,17 +195,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
 
                 % ---- Build W_for_gray only if disturbance channels exist ----
-                if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
-                    if ~isempty(sys_cora.E) && isequal(size(sys_cora.E), size(sys_cora.B)) && ...
-                            norm(sys_cora.E - sys_cora.B, 'fro') < 1e-12
-                        W_for_gray = U;                 % E == B --> pass U so E*W = B*U
-                    else
-                        W_for_gray = normalizeWForGray(sys_cora, W_used);  % conservative preimage
-                    end
-                else
-                    W_for_gray = [];                    % no disturbance channels --> no override
-                end
-
+                W_for_gray = build_W_for_gray(sys_cora, U, W_used);
                 
             
                 % ================= GRAY =================
@@ -292,26 +208,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                     'externalTS_val',   TS_val);  
                 Tlearn_g = toc(t3);
                 
-                want = "graySeq";
-                idxGray = find(cellfun(@(c) isfield(c,'name') && want==string(c.name), configs), 1, 'first');
-                if isempty(idxGray), idxGray = min(2, numel(configs)); end
+                idxGray = pick_gray_config(configs, C);
 
                 % ---- Set W_pred only if identified Gray sys has disturbance channels ----
-                if isprop(configs{idxGray}.sys,'nrOfDisturbances') && configs{idxGray}.sys.nrOfDisturbances > 0
-                    if ~isempty(configs{idxGray}.sys.E) && isequal(size(configs{idxGray}.sys.E), size(configs{idxGray}.sys.B)) && ...
-                            norm(configs{idxGray}.sys.E - configs{idxGray}.sys.B, 'fro') < 1e-12
-                        W_pred = U;                    % E == B
-                    else
-                        W_pred = normalizeWForGray(configs{idxGray}.sys, W_used);
-                    end
-                else
-                    W_pred = [];
-                end
-                
+                W_pred = build_W_pred(configs{idxGray}.sys, U, W_used);
                 if ~isfield(configs{idxGray},'params') || isempty(configs{idxGray}.params)
                     configs{idxGray}.params = struct();
                 end
-                if ~isempty(W_pred)                     % only set when it's meaningful
+                if ~isempty(W_pred)
                     configs{idxGray}.params.W = W_pred;
                 end
 
@@ -378,8 +282,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                     sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
                 
-                    if use_noise, W_plot = W_used; else, W_plot = zonotope(zeros(size(center(W_used),1),1)); end
-                    %%
+                    W_plot = pick_W_for_plot(W_used, use_noise);
+
                     reach_dir = fullfile(plots_dir,'reach');
                     if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
                     
@@ -395,7 +299,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                         configs{idxGray}.sys, ...
                         VAL, ...
                         'MAB', M_AB, ...
-                        'W', W_used, ...
+                        'W', W_plot, ...
                         'Dims', dims, ...
                         'ShowSamples', false, ...
                         'Save', savename_png);
@@ -480,28 +384,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                     configs{idxGray}.params, 'overrideW', W_pred);
                 Tinfer_g   = toc(t4);
                 
-                % ---- Now stream per-step metrics (both available)
-                if ~exist(csv_perstep,'file') || dir(csv_perstep).bytes==0
-                    fid_h = fopen(csv_perstep,'w');
-                    fprintf(fid_h,'row,k,wid_ddra,wid_gray,ratio_gray_true\n');
-                    fclose(fid_h);
-                end
-                ratio_k = [];
-                if exist('artifact','var') && isfield(artifact,'metrics') && isfield(artifact.metrics,'ratio_gray_vs_true_k')
-                    ratio_k = artifact.metrics.ratio_gray_vs_true_k;
-                end
-                nkv = numel(wid_gray_k);
-                if ~exist('wid_ddra_k','var') || numel(wid_ddra_k) ~= nkv
-                    wid_ddra_k = nan(nkv,1);
-                end
-                if isempty(ratio_k), ratio_k = nan(nkv,1); end
-                
-                fid_ps = fopen(csv_perstep,'a');
-                for kk = 1:nkv
-                    fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g\n', row_index, kk, wid_ddra_k(kk), wid_gray_k(kk), ratio_k(kk));
-                end
-                fclose(fid_ps);    
-                
                 % --- Pack row ---
                 % ensure percentages
                 if (ctrain_gray <= 1), ctrain_gray = 100*ctrain_gray; end
@@ -566,6 +448,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                         warning(ME.message);
                     end
 
+                    ratio_k = [];
+                    if exist('artifact','var') && isfield(artifact,'metrics') && ...
+                           isfield(artifact.metrics,'ratio_gray_vs_true_k')
+                        ratio_k = artifact.metrics.ratio_gray_vs_true_k;
+                    end
+                    stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ratio_k);
+
+
 
                     save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
 
@@ -583,24 +473,8 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % --- Initialize schema & write/accumulate ----
-                if rowi == 1
-                    hdr = fieldnames(orderfields(row))';
-                    if LM.append_csv
-                        fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
-                    else
-                        cells = cell(Ntot, numel(hdr));
-                    end
-                end
-    
-                if LM.append_csv
-                    append_row_csv(csv_path, hdr, row);
-                else
-                    for j = 1:numel(hdr)
-                        v = row.(hdr{j}); if isstring(v), v = char(v); end
-                        cells{rowi, j} = v;
-                    end
-                end
-    
+                write_row(row, csv_path, LM);
+
                 clear M_AB Zinfo sizeI_ddra sizeI_gray TS_train TS_val DATASET DATASET_val VAL
               end
             end
@@ -622,3 +496,131 @@ function SUMMARY = run_sweeps(cfg, grid)
 end
 
 
+% ---------- nested helpers (drop-in) ------------------------------------
+
+function write_row_init_if_needed(row, csv_path, LM)
+    % Initializes header and in-memory cells (if needed) using caller scope.
+    % Relies on outer-scope variables: hdr, cells, Ntot, rowi
+    persistent initialized
+    if isempty(initialized) || rowi == 1
+        hdr = fieldnames(orderfields(row))';
+        if LM.append_csv
+            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
+        else
+            cells = cell(Ntot, numel(hdr));
+        end
+        initialized = true;
+    end
+end
+
+function write_row(row, csv_path, LM)
+    % Writes one row to CSV or in-memory cells (same logic you already use)
+    % Relies on outer-scope: hdr, cells, rowi
+    write_row_init_if_needed(row, csv_path, LM);
+    if LM.append_csv
+        append_row_csv(csv_path, hdr, row);
+    else
+        for j = 1:numel(hdr)
+            v = row.(hdr{j}); if isstring(v), v = char(v); end
+            cells{rowi, j} = v;
+        end
+    end
+end
+
+function emit_skip_row(reason, varargin)
+    % Common skip pathway to avoid copy-paste
+    % varargin lets you pass name/value that end up on row fields
+    % Relies on outer-scope vars already in run_sweeps: C, D, alpha_w, pe,
+    % Zinfo, Tlearn, Tcheck, use_noise, csv_path, LM, rowi
+    rowi = rowi + 1;
+    row = pack_row(C, D, alpha_w, pe, ...
+        NaN, NaN, NaN, NaN, NaN, ...
+        Zinfo.rankZ, Zinfo.condZ, ...
+        Tlearn, exist('Tcheck','var')*Tcheck + ~exist('Tcheck','var')*NaN, ...
+        NaN, NaN, NaN, NaN);
+    row.skipped     = true;
+    row.skip_reason = string(reason);
+    row.use_noise   = use_noise;
+
+    % attach any extra fields (e.g., ridge info)
+    for k = 1:2:numel(varargin)
+        row.(varargin{k}) = varargin{k+1};
+    end
+
+    write_row(row, csv_path, LM);
+end
+
+function idxGray = pick_gray_config(configs, C)
+    % Same logic you use in multiple places, consolidated
+    want = "graySeq";
+    try
+        if isfield(C,'gray') && isfield(C.gray,'methodsGray') && ~isempty(C.gray.methodsGray)
+            want = string(C.gray.methodsGray(1));
+        end
+    catch
+    end
+    idxGray = find(cellfun(@(c) isfield(c,'name') && want==string(c.name), configs), 1, 'first');
+    if isempty(idxGray), idxGray = min(2, numel(configs)); end
+end
+
+function Wfg = build_W_for_gray(sys_cora, U, W_used)
+    % Your E==B fast-path + fallback mapping + no-disturbance guard
+    if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
+        if ~isempty(sys_cora.E) && isequal(size(sys_cora.E), size(sys_cora.B)) && ...
+                norm(sys_cora.E - sys_cora.B, 'fro') < 1e-12
+            Wfg = U;                 % exact: E*W = B*U
+        else
+            Wfg = normalizeWForGray(sys_cora, W_used);  % conservative preimage
+        end
+    else
+        Wfg = [];                    % no disturbance channels
+    end
+end
+
+function Wpred = build_W_pred(gray_sys, U, W_used)
+    % Same idea as build_W_for_gray, but on the identified model
+    if isprop(gray_sys,'nrOfDisturbances') && gray_sys.nrOfDisturbances > 0
+        if ~isempty(gray_sys.E) && isequal(size(gray_sys.E), size(gray_sys.B)) && ...
+                norm(gray_sys.E - gray_sys.B, 'fro') < 1e-12
+            Wpred = U;
+        else
+            Wpred = normalizeWForGray(gray_sys, W_used);
+        end
+    else
+        Wpred = [];
+    end
+end
+
+function ensure_perstep_header(csv_perstep)
+    if ~exist(csv_perstep,'file') || dir(csv_perstep).bytes==0
+        fid_h = fopen(csv_perstep,'w');
+        fprintf(fid_h,'row,k,wid_ddra,wid_gray,ratio_gray_true\n');
+        fclose(fid_h);
+    end
+end
+
+function stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ratio_k)
+    ensure_perstep_header(csv_perstep);
+    nkv = numel(wid_gray_k);
+    if ~exist('wid_ddra_k','var') || numel(wid_ddra_k) ~= nkv, wid_ddra_k = nan(nkv,1); end
+    if ~exist('ratio_k','var')     || numel(ratio_k)     ~= nkv, ratio_k     = nan(nkv,1); end
+    fid_ps = fopen(csv_perstep,'a');
+    for kk = 1:nkv
+        fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g\n', row_index, kk, wid_ddra_k(kk), wid_gray_k(kk), ratio_k(kk));
+    end
+    fclose(fid_ps);
+end
+
+function Wplot = pick_W_for_plot(W_used, use_noise)
+    if use_noise, Wplot = W_used;
+    else,        Wplot = zonotope(zeros(size(center(W_used),1),1));
+    end
+end
+
+function logf(varargin)
+    % toggle with cfg.io.verbose=true/false if you want
+    try, vb = logical(getfielddef(cfg,'io',struct()).verbose);
+    catch, vb = true;
+    end
+    if vb, fprintf(varargin{:}); end
+end
