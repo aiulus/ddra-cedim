@@ -6,7 +6,7 @@ function R = conformance_gray(lookup, conf_opts)
     %   lookup: struct with fields
     %       .sys.dcheckyn   (string) dynamics key for custom_loadDynamics()
     %       .sys.n_n   (int)    optional (e.g., platoon vehicle count)
-    %       .sys.type  (string) optional CORA uncertainty preset: "rand"|"diag"|"standard" (default "rand")
+    %       .sys.type  (string) optional COaRA uncertainty preset: "rand"|"diag"|"standard" (default "rand")
     %       .methodsGray (string array) optional, default ["graySeq","grayLS","graySim"]
     %       .n_s, .n_m, .n_k    (id data config)
     %       .n_m_val, .n_k_val, .n_s_val (validation config; n_s_val defaults to n_s)

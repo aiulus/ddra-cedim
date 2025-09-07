@@ -74,7 +74,22 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
 
             % interval width (sum over outputs)
             Ik = interval(Yk);
-            wk = sum(diam(Ik));
+            
+            % CORA-compatible: width = sup - inf
+            try
+                lo = infimum(Ik);
+                hi = supremum(Ik);
+            catch
+                % very old CORA builds store fields directly
+                if isstruct(Ik) && isfield(Ik,'inf') && isfield(Ik,'sup')
+                    lo = Ik.inf;
+                    hi = Ik.sup;
+                else
+                    error('interval() returned an unexpected type; cannot extract bounds.');
+                end
+            end
+            
+            wk = sum(max(hi - lo, 0));   % guard tiny negatives from numerics
 
             wid_sums(k)   = wid_sums(k)   + wk;
             wid_counts(k) = wid_counts(k) + 1;

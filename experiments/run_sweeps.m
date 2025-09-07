@@ -10,6 +10,12 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     [plots_dir, results_dir] = init_io(cfg); 
     csv_path = fullfile(results_dir, 'summary.csv');
+    csv_perstep = fullfile(results_dir, 'summary_perstep.csv');
+    if exist(csv_perstep,'file'), delete(csv_perstep); end
+    fid_ps = fopen(csv_perstep,'w');
+    fprintf(fid_ps, 'row,k,wid_ddra,wid_gray,ratio_gray_true\n');
+    fclose(fid_ps);
+
 
     % -------- Low-memory / IO toggles (with safe defaults) ---------------
     LM = getfielddef(cfg, 'lowmem', struct());
@@ -440,16 +446,34 @@ function SUMMARY = run_sweeps(cfg, grid)
                     sizeI_ddra   = mean(sizeI_ddra_k);
                 end
 
-                % if size(wid_ddra,1) ~= C.shared.n_k_val, wid_ddra = wid_ddra.'; end
-
-                % ---- Gray size metric (interval proxy), consistent with DDRA
-                %% Start patch
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred);
 
                 Tinfer_g   = toc(t4);
+                
+                % --- Stream per-step metrics
+                ratio_k = [];
+                if exist('artifact','var') && isfield(artifact,'metrics') && isfield(artifact.metrics,'ratio_gray_vs_true_k')
+                    ratio_k = artifact.metrics.ratio_gray_vs_true_k;
+                end
+                nkv = numel(wid_gray_k);
+                if exist('sizeI_ddra_k','var')
+                    wid_ddra_k = sizeI_ddra_k;
+                else
+                    wid_ddra_k = nan(nkv,1);
+                end
+                if isempty(ratio_k), ratio_k = nan(nkv,1); end
+                
+                fid_ps = fopen(csv_perstep,'a');
+                for kk = 1:nkv
+                    fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g\n', row_index, kk, wid_ddra_k(kk), wid_gray_k(kk), ratio_k(kk));
+                end
+                fclose(fid_ps);
+
+
+                % if size(wid_ddra,1) ~= C.shared.n_k_val, wid_ddra = wid_ddra.'; end
                 
                 % --- Optional: save plotting artifact for this row ---
                 if isfield(cfg,'io') && isfield(cfg.io,'save_artifacts') && cfg.io.save_artifacts
@@ -571,18 +595,6 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 end
 
-% ------------------- Helpers-------------------
 
-function use_noise = resolve_use_noise(S)
-    % Single switch: default = true unless explicitly disabled
-    if isfield(S,'noise_for_ddra') || isfield(S,'noise_for_gray')
-        % require both ON to be true; any false -> off
-        g = ~isfield(S,'noise_for_gray') || logical(S.noise_for_gray);
-        d = ~isfield(S,'noise_for_ddra') || logical(S.noise_for_ddra);
-        use_noise = g && d;
-    else
-        use_noise = true;
-    end
-end
 
 

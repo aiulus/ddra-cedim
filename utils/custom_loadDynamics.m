@@ -517,9 +517,16 @@ switch dynamics
         B_ex = sysd.B*S;
         C_d  = eye(2*D);
         D_d  = zeros(2*D, m_u);
-        sys  = linearSysDT(A_cl, B_ex, [], C_d, D_d, dt);
-        % Make the disturbance map E equal to the input map B_ex
-        %sys  = linearSysDT(A_cl, B_ex, B_ex, C_d, D_d, dt);
+        %sys  = linearSysDT(A_cl, B_ex, [], C_d, D_d, dt);
+        % Patch
+        nx = size(A_cl,1);
+        ny = size(C_d,1);
+        E  = B_ex;                          % expose disturbance channel aligned with inputs
+        F  = zeros(ny, size(E,2));          % no output disturbance map
+        c  = zeros(nx,1);                   % zero state offset
+        k  = zeros(ny,1);                   % zero output offset
+        sys = linearSysDT(A_cl, B_ex, c, C_d, D_d, k, E, F, dt);
+
 
 
         % ---------- sets (dim_u becomes m) ----------   

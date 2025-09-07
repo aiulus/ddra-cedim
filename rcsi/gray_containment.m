@@ -12,20 +12,25 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
     addParameter(p,'externalTS_val',[]);
     addParameter(p,'plot_settings',[]);   % [] suppresses plotting in validateReach
     parse(p, varargin{:});
+
     CC        = p.Results.check_contain;
     TS_train  = p.Results.externalTS_train;
     TS_val    = p.Results.externalTS_val;
     PS        = p.Results.plot_settings;
-    % Tolerance parity (if options.cs exists)
+
+    % --- Containment tolerance parity (thread cfg.metrics.tol into configs.*.options.cs)
     tol = 1e-6;
-    try
-        if isfield(C,'metrics') && isfield(C.metrics,'tol'), tol = C.metrics.tol; end
-    catch 
+    if isfield(C,'metrics') && isfield(C.metrics,'tol') && ~isempty(C.metrics.tol)
+        tol = C.metrics.tol;
     end
     for ii = 1:numel(configs)
-        if isfield(configs{ii},'options') && isfield(configs{ii}.options,'cs')
-            configs{ii}.options.cs.robustnessMargin = tol;
+        if ~isfield(configs{ii},'options') || ~isstruct(configs{ii}.options)
+            configs{ii}.options = struct();
         end
+        if ~isfield(configs{ii}.options,'cs') || ~isstruct(configs{ii}.options.cs)
+            configs{ii}.options.cs = struct();
+        end
+        configs{ii}.options.cs.robustnessMargin = tol;
     end
 
 
