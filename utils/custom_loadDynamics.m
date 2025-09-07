@@ -518,6 +518,8 @@ switch dynamics
         C_d  = eye(2*D);
         D_d  = zeros(2*D, m_u);
         sys  = linearSysDT(A_cl, B_ex, [], C_d, D_d, dt);
+        % Make the disturbance map E equal to the input map B_ex
+        %sys  = linearSysDT(A_cl, B_ex, B_ex, C_d, D_d, dt);
 
 
         % ---------- sets (dim_u becomes m) ----------   

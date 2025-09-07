@@ -85,7 +85,11 @@ function SUMMARY = run_sweeps(cfg, grid)
                 use_noise   = resolve_use_noise(C.shared);
                 % Respect policy: PEness -> explicit L; others -> minimal sufficient
                 C.shared.pe_policy = baseC.shared.pe_policy;   % carry into row config
-                pe_eff = finalize_pe_order(pe, sys_cora, C);   % pass C, not cfg
+
+                %% Old
+                % pe_eff = finalize_pe_order(pe, sys_cora, C);   % pass C, not cfg
+                %% New
+                pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k);
 
                 % ================= DDRA =================
                 t0 = tic;

@@ -29,16 +29,15 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_
     end
 
 
-    % --- Disturbance set W (used for learning/validation, not for simulate)
-    eta_w   = getfielddef(C.ddra,'eta_w',1);
-    alpha_w = getfielddef(C.ddra,'alpha_w',0);
-    G_w     = alpha_w * eye(nx, max(1, eta_w));
-    W       = zonotope(zeros(nx,1), G_w);
-
-    % Global noise policy: if disabled, W is hard zero
-    if ~resolve_use_noise(C.shared)
-        W = zonotope(zeros(nx,1));
+    % --- Disturbance set W: push forward input uncertainty through B  (W = B*U)
+    if resolve_use_noise(C.shared)
+        G_U = generators(U);                 % (nu × r)
+        G_W = sys_ddra.B * G_U;              % (nx × r)
+        W   = zonotope(zeros(nx,1), G_W);    % zero center; growth only
+    else
+        W   = zonotope(zeros(nx,1));
     end
+
 
     % ------------------ PE nominal inputs (per trajectory m) ---------------
     U_nom_all = cell(1, n_m);

@@ -118,6 +118,14 @@ function R = conformance_gray(lookup, conf_opts)
         configs{i+1}.name    = type;
         fprintf("Identification time: %.4f s\n", Ts);
     end
+
+    % Unify noise for validateReach: W := U  (since E=B, E*W = B*U)
+    if sys.nrOfDisturbances > 0
+        for i = 1:numel(configs)
+            configs{i}.params.W = lookup.U;
+        end
+    end
+
     
     % ---- Validation & Visualization ----
     % Identification containment sanity-check on training data
