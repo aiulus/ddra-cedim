@@ -16,6 +16,18 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
     TS_train  = p.Results.externalTS_train;
     TS_val    = p.Results.externalTS_val;
     PS        = p.Results.plot_settings;
+    % Tolerance parity (if options.cs exists)
+    tol = 1e-6;
+    try
+        if isfield(C,'metrics') && isfield(C.metrics,'tol'), tol = C.metrics.tol; end
+    catch 
+    end
+    for ii = 1:numel(configs)
+        if isfield(configs{ii},'options') && isfield(configs{ii}.options,'cs')
+            configs{ii}.options.cs.robustnessMargin = tol;
+        end
+    end
+
 
     % ---- build test suites if not provided ----
     optTS = ts_options_from_pe(C, pe, sys_cora);
@@ -38,12 +50,12 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
 
 
     % ---- TRAIN ----
-    [num_out_tr, num_all_tr] = eval_suite(TS_train, sys_cora, configs, CC, PS);
+    [num_out_tr, num_all_tr] = eval_suite(TS_train, configs, CC, PS);
     ctrain = 100*(1 - num_out_tr(i_gray)/max(1, num_all_tr));
 
     % ---- VAL (timed) ----
     t0 = tic;
-    [num_out_val, num_all_val] = eval_suite(TS_val, sys_cora, configs, CC, PS);
+    [num_out_val, num_all_val] = eval_suite(TS_val, configs, CC, PS);
     Tval = toc(t0);
     cval = 100*(1 - num_out_val(i_gray)/max(1, num_all_val));
 
@@ -68,35 +80,17 @@ function VAL = pack_VAL_from_TS(TS)
 end
 
 % ---- evaluator (mirrors CORA example usage) ----
-function [num_out_vec, num_all] = eval_suite(TS, sys_cora, configs, CC, PS)
-    isLinear = isa(sys_cora,'linearSysDT') || isa(sys_cora,'linearARX');
+function [num_out_vec, num_all] = eval_suite(TS, configs, CC, PS)
     num_out_vec = zeros(numel(configs),1);
     num_all = 0;
-
-    if isLinear
-        % Evaluate each testCase separately (no combining)
-        for m = 1:numel(TS)
-            if isempty(PS)
-                [~, ev] = validateReach(TS{m}, configs, CC);
-            else
-                [~, ev] = validateReach(TS{m}, configs, CC, PS);
-            end
-            num_out_vec = num_out_vec + ev.num_out;
-            nk = size(TS{m}.y,1);
-            ns = size(TS{m}.y,3);
-            num_all = num_all + nk*ns;
+    for m = 1:numel(TS)
+        if isempty(PS)
+            [~, ev] = validateReach(TS{m}, configs, CC);
+        else
+            [~, ev] = validateReach(TS{m}, configs, CC, PS);
         end
-    else
-        % nonlinear: iterate per test case (do NOT split per-sample)
-        for m = 1:numel(TS)
-            if isempty(PS)
-                [~, ev] = validateReach(TS{m}, configs, CC);
-            else
-                [~, ev] = validateReach(TS{m}, configs, CC, PS);
-            end
-            num_out_vec = num_out_vec + ev.num_out;
-            nk = size(TS{m}.y,1); ns = size(TS{m}.y,3);
-            num_all = num_all + nk * ns;
-        end
+        num_out_vec = num_out_vec + ev.num_out;
+        nk = size(TS{m}.y,1); ns = size(TS{m}.y,3);
+        num_all = num_all + nk * ns;
     end
 end

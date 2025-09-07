@@ -25,6 +25,7 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     % -------- Sweep axes & base config -----------------------------------
     [axes, baseC] = init_sweep_axes(cfg, grid);
+    if ~isfield(cfg,'metrics') || ~isfield(cfg.metrics,'tol'), cfg.metrics.tol = 1e-6; end
     % ---- PE policy: explicit for "pe_sweep", minimal otherwise unless forced ----
     is_pe_sweep_tag = contains(lower(string(getfielddef(cfg.io,'save_tag',""))), 'pe_sweep');
     has_forced = any(cellfun(@(p) isfield(p,'force_order') && p.force_order, axes.pe));
@@ -68,11 +69,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C.shared.n_m_val = max(2, min(n_m, getfielddef(baseC.shared, 'n_m_val', 2)));
                 C.shared.n_s_val = n_s;  C.shared.n_k_val = n_k;
                 C.ddra.alpha_w   = alpha_w;
-                % --- per-row deterministic seed (distinct datasets per sweep row) ---
-                row_index     = rowi + 1;             % the row we're about to produce
-                row_seed      = 10000 + row_index;    % any fixed offset is fine
-                C.shared.seed = row_seed;
-                rng(row_seed,'twister');
+                
                 if C.shared.dyn == "k-Mass-SD"; C.shared.dyn_p = D; end
     
                 % --- Build true systems ---
@@ -85,6 +82,21 @@ function SUMMARY = run_sweeps(cfg, grid)
                 use_noise   = resolve_use_noise(C.shared);
                 % Respect policy: PEness -> explicit L; others -> minimal sufficient
                 C.shared.pe_policy = baseC.shared.pe_policy;   % carry into row config
+
+                %% Patch
+                % Harmonize PE strength across scripts if strength_rel is provided
+                if ~isfield(pe,'strength') || isempty(pe.strength)
+                    if isfield(pe,'strength_rel') && ~isempty(pe.strength_rel)
+                        G = generators(U); hw = sum(abs(G),2);                    % per-channel half-width
+                        pe.strength = mean(pe.strength_rel .* (hw + (hw==0)));    % scalar strength for genPEInput
+                    end
+                end
+                
+                % If order missing, use minimal and clamp by horizon
+                if ~isfield(pe,'order') || isempty(pe.order)
+                    nx = sys_cora.nrOfDims; pe.order = max(1, min(sys_cora.nrOfDims+1, C.shared.n_k-1));
+                end
+
 
                 %% Old
                 % pe_eff = finalize_pe_order(pe, sys_cora, C);   % pass C, not cfg
@@ -166,6 +178,42 @@ function SUMMARY = run_sweeps(cfg, grid)
                     W_eff = W;  % no inflation in legacy path
                 end
                 Tcheck = toc(t1);
+
+                % Fairness: if ridge would inflate MAB and we're not mirroring it into Gray, skip row for both
+                if isfield(ridgeInfo,'used') && ridgeInfo.used && ...
+                   isfield(ridgeInfo,'policy') && string(ridgeInfo.policy)=="inflate_MAB"
+                    rowi = rowi + 1;
+                    row = pack_row(C, D, alpha_w, pe, ...
+                        NaN, NaN, NaN, NaN, NaN, ...
+                        Zinfo.rankZ, Zinfo.condZ, ...
+                        Tlearn, NaN, NaN, NaN, NaN, NaN);
+                    row.skipped       = true;
+                    row.skip_reason   = "ridge_inflate_MAB_unmirrored";
+                    row.use_noise     = resolve_use_noise(C.shared);
+                    row.ddra_ridge    = true; row.ddra_lambda = ridgeInfo.lambda;
+                    row.ddra_kappa    = ridgeInfo.kappa; row.ddra_ridge_policy = char(ridgeInfo.policy);
+                
+                    % write row (same as your existing skip path)
+                    if rowi == 1
+                        hdr = fieldnames(orderfields(row))';
+                        if LM.append_csv
+                            fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
+                        else
+                            cells = cell(Ntot, numel(hdr));
+                        end
+                    end
+                    if LM.append_csv
+                        append_row_csv(csv_path, hdr, row);
+                    else
+                        for j = 1:numel(hdr)
+                            v = row.(hdr{j}); if isstring(v), v = char(v); end
+                            cells{rowi, j} = v;
+                        end
+                    end
+                    clear Xminus Xplus TS_train TS_val DATASET DATASET_val
+                    continue;
+                end
+
                 
                 % If rank-deficient and allow_ridge = false, skip this sweep point
                 if isfield(ridgeInfo,'skipped') && ridgeInfo.skipped
@@ -217,7 +265,16 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
                 
                 % *** NEW: normalize to sys_cora BEFORE gray_identify ***
-                W_for_gray = normalizeWForGray(sys_cora, W_used);
+                %W_for_gray = normalizeWForGray(sys_cora, W_used);
+
+                % If E == B, just pass U in disturbance space so E*W = B*U exactly
+                if ~isempty(sys_cora.E) && isequal(size(sys_cora.E), size(sys_cora.B)) && ...
+                        norm(sys_cora.E - sys_cora.B, 'fro') < 1e-12
+                    W_for_gray = U;                 % disturbance-dim = nu
+                else
+                    % Conservative preimage to disturbance space (guarantee E*Wd \supseteq W)
+                    W_for_gray = normalizeWForGray(sys_cora, W_used);
+                end
             
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
@@ -233,11 +290,22 @@ function SUMMARY = run_sweeps(cfg, grid)
                 idxGray = find(cellfun(@(c) isfield(c,'name') && want==string(c.name), configs), 1, 'first');
                 if isempty(idxGray), idxGray = min(2, numel(configs)); end
 
-                W_pred = normalizeWForGray(configs{idxGray}.sys, W_used);
+                if ~isempty(configs{idxGray}.sys.E) && isequal(size(configs{idxGray}.sys.E), size(configs{idxGray}.sys.B)) && ...
+                        norm(configs{idxGray}.sys.E - configs{idxGray}.sys.B, 'fro') < 1e-12
+                    W_pred = U;                    % pass U in disturbance space (E=B)
+                else
+                    W_pred = normalizeWForGray(configs{idxGray}.sys, W_used);
+                end
+
                 if ~isfield(configs{idxGray},'params') || isempty(configs{idxGray}.params)
                     configs{idxGray}.params = struct();
                 end
                 configs{idxGray}.params.W = W_pred;
+
+                fprintf('Reporting from line 257@run_sweeps.m. \n ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', ...
+                   sum(abs(generators(W_used)),'all'), ...
+                   sum(abs(sys_cora.E*generators(coerceWToSys(sys_cora, W_used))),'all'));
+
 
 
                 % Build VAL record (x0,u) from TS_val and pass to both sides
@@ -359,7 +427,7 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                     % Containment should also be done in output-space:
                     %cval_ddra = contains_on_VAL_linear(sys_true_dt, W_used, Ysets_ddra, VAL);  
-                    cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, 1e-6);
+                    cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, cfg.metrics.tol);
 
                     clear Xsets_ddra
                 else
@@ -368,14 +436,17 @@ function SUMMARY = run_sweeps(cfg, grid)
                     t2 = tic;
                     [sizeI, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, [], W_alg1, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    sizeI_ddra = mean(wid_ddra(:));
+                    sizeI_ddra_k = mean(wid_ddra, 2);
+                    sizeI_ddra   = mean(sizeI_ddra_k);
                 end
+
+                % if size(wid_ddra,1) ~= C.shared.n_k_val, wid_ddra = wid_ddra.'; end
 
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 %% Start patch
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
-                sizeI_gray = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
+                [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred);
 
                 Tinfer_g   = toc(t4);
@@ -396,7 +467,44 @@ function SUMMARY = run_sweeps(cfg, grid)
                     artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
                       'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
                       'n_k', C.shared.n_k, 'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2);
+                    artifact.metrics.sizeI_gray_k = wid_gray_k;
+                    if exist('sizeI_ddra_k','var'), artifact.metrics.sizeI_ddra_k = sizeI_ddra_k; end
+                    artifact.metrics.sizeI_gray_k = wid_gray_k;
+
+                    try
+                        % Per-step volume ratio: Gray vs True (averaged over blocks)
+                        nkv = C.shared.n_k_val;
+                        ratio_k = zeros(nkv,1); cnt_k = zeros(nkv,1);
                     
+                        % Build reach options without cs
+                        optReach = getfielddef(C.shared,'options_reach', struct());
+                        if isfield(optReach,'cs'), optReach = rmfield(optReach,'cs'); end
+                    
+                        for b = 1:numel(VAL.x0)
+                            params_true = struct('R0', VAL.R0, 'U', U, 'u', VAL.u{b}', 'tFinal', sys_true_dt.dt*(nkv-1));
+                            params_gray = struct('R0', configs{idxGray}.params.R0 + VAL.x0{b}, ...
+                                                 'u',  VAL.u{b}', 'tFinal', configs{idxGray}.sys.dt*(nkv-1));
+                            if configs{idxGray}.sys.nrOfDisturbances>0
+                                params_gray.W = W_pred;  % already in disturbance space
+                            end
+                    
+                            Rt = reach(sys_true_dt, params_true, optReach).timePoint.set;
+                            Rg = reach(configs{idxGray}.sys, params_gray, optReach).timePoint.set;
+                    
+                            for k = 1:nkv
+                                Yt = linearMap(Rt{k}, sys_true_dt.C);  yt = norm(Yt);
+                                Yg = linearMap(Rg{k}, configs{idxGray}.sys.C); yg = norm(Yg);
+                                if yt > 0
+                                    ratio_k(k) = ratio_k(k) + yg/yt;  cnt_k(k) = cnt_k(k) + 1;
+                                end
+                            end
+                        end
+                        artifact.metrics.ratio_gray_vs_true_k = ratio_k ./ max(1, cnt_k);
+                    catch ME
+                        warning(ME.message);
+                    end
+
+
                     save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
 
                 end

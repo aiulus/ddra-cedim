@@ -1,10 +1,11 @@
-function sizeI = gray_infer_size_on_VAL(sys, TS_val, C, params_in, varargin)
+function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, varargin)
 %GRAY_INFER_SIZE_ON_VAL  Output-interval size proxy for Gray on VAL points.
-% Uses measured u (per testcase), injects params.W (zero if noise disabled),
-% strips optimizer block from options, and maps to output via linearMap.
+% Returns:
+%   sizeI : scalar = mean interval width over ALL (blocks × time)
+%   wid_k : n_k-by-1 = mean interval width per time step (avg across blocks)
 
     p = inputParser;
-    addParameter(p,'overrideW',[]);     % if provided, use this W
+    addParameter(p,'overrideW',[]);     % if provided, use this W (any space)
     parse(p, varargin{:});
     W_override = p.Results.overrideW;
 
@@ -12,22 +13,37 @@ function sizeI = gray_infer_size_on_VAL(sys, TS_val, C, params_in, varargin)
     options = getfielddef(C.shared,'options_reach', struct());
     if isfield(options,'cs'); options = rmfield(options,'cs'); end
 
-    acc = 0; count = 0;
+    % allow nk from config, but tolerate testcases with different nk
+    nk_global = getfielddef(getfielddef(C,'shared',struct()),'n_k_val',0);
+    if nk_global<=0
+        nk_global = max(cellfun(@(tc) size(tc.y,1), TS_val));
+    end
+    wid_sums   = zeros(nk_global,1);
+    wid_counts = zeros(nk_global,1);
+
+    acc = 0; 
+    count = 0;
 
     for m = 1:numel(TS_val)
         tc = TS_val{m};
         nk = size(tc.y,1);
 
+        % --- representative initial state for this testcase (nx×1)
+        x0bar = mean(tc.initialState, 3);           % average over samples
+        % (alternative: tc.initialState(:,:,1))
+
         % --- build params for this testcase
         params = struct();
-        params.R0     = params_in.R0 + tc.initialState;
-        params.u      = tc.u';                              % measured input
+        params.R0     = params_in.R0 + x0bar;       % shift by vector (nx×1)
+        params.u      = tc.u.';                     % measured input, (nu×nk)
         params.tFinal = sys.dt * (nk-1);
 
         % input padding if model expects more channels
         du = sys.nrOfInputs - size(params.u,1);
-        if du ~= 0
-            params.u = cat(1, params.u, zeros(du, size(params.u,2), size(params.u,3)));
+        if du > 0
+            params.u = [params.u; zeros(du, size(params.u,2))];
+        elseif du < 0
+            params.u = params.u(1:sys.nrOfInputs, :);  % defensive
         end
 
         % --- disturbance set W (required if nrOfDisturbances>0)
@@ -42,64 +58,43 @@ function sizeI = gray_infer_size_on_VAL(sys, TS_val, C, params_in, varargin)
         end
 
         % --- reach in state space
-        R = reach(sys, params, options);   % CORA object
-        R = R.timePoint.set;               % cell array of contSets
+        R = reach(sys, params, options);            % CORA object
+        R = R.timePoint.set;                        % cell array of contSets
 
-        % --- map to outputs and accumulate volume
-        vols = [];
+        % --- per-step sizes and accumulation (avg across blocks only)
         for k = 1:nk
             Xk = R{k};
             if isempty(Xk) || ~isa(Xk,'contSet'), continue; end
-            % output map (or identity if C is missing)
+            % output map (or identity if C missing)
             try
                 Yk = linearMap(Xk, sys.C);
             catch
                 Yk = Xk;
             end
-            vols(end+1,1) = norm(Yk);
+
+            % interval width (sum over outputs)
+            Ik = interval(Yk);
+            wk = sum(diam(Ik));
+
+            wid_sums(k)   = wid_sums(k)   + wk;
+            wid_counts(k) = wid_counts(k) + 1;
+
+            % global scalar proxy uses the same widths
+            acc   = acc   + wk;
+            count = count + 1;
         end
-        acc   = acc   + sum(vols);
-        count = count + numel(vols);
-        if count == 0
-            sizeI = NaN;   
-        else
-            sizeI = acc / count;
-        end 
     end
+
+    % outputs
+    if count==0
+        sizeI = NaN;
+    else
+        sizeI = acc / count;
+    end
+    wid_k = wid_sums ./ max(1, wid_counts);
 end
 
 % --- Helpers ---
 function v = getfielddef(S,f,d)
     if isstruct(S) && isfield(S,f), v = S.(f); else, v = d; end
-end
-
-function Wd = coerceWToSys(sys_, W_in)
-    % Return [] for no disturbances, or a zonotope in R^{nrOfDisturbances}
-    nw = sys_.nrOfDisturbances;
-    if nw == 0 || isempty(W_in)
-        Wd = []; return;
-    end
-    if ~isa(W_in,'zonotope')
-        warning('overrideW is not a zonotope; dropping to zero-disturbance.'); 
-        Wd = zonotope(zeros(nw,1)); return;
-    end
-    d_in = size(center(W_in),1);
-    if d_in == nw
-        Wd = W_in; return;  % already correct dimension
-    end
-    % Try to map state-noise to disturbance-noise via left pseudo-inverse of E
-    E = getfielddef(sys_,'E',[]);
-    if ~isempty(E) && size(E,1) == d_in && size(E,2) == nw
-        % Conservative preimage via pinv: Wd := pinv(E) * Ws
-        % NOTE: E*Wd == Proj_{col(E)}(Ws); this is an approximation for size metric.
-        Wd = linearMap(W_in, pinv(E));
-        % If you want an explicit safety margin, add a tiny ε-box here:
-        % epsBox = zonotope(zeros(nw,1), 1e-12*eye(nw));
-        % Wd = Wd + epsBox;
-        return;
-    end
-    % Fallback: zero disturbance with correct dimension
-    warning(['overrideW dim=%d incompatible with sys.nrOfDisturbances=%d; ' ...
-             'falling back to zero-disturbance for Gray size metric.'], d_in, nw);
-    Wd = zonotope(zeros(nw,1));
 end
