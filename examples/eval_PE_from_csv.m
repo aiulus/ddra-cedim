@@ -1,11 +1,11 @@
 %% TODO:
 % - Explanations on what each plot computes
 % - E4:E7
-% - Continue debugging from line 14 (boxplot)
+% - Continue debugging from line 15 (boxplot)
 % - Include augment_metrics()
+% - Generate more tests
 
-
-% results_dir = '/Users/aybuke/Documents/MATLAB/ddra-cedim/experiments/results/data/kMSD_pe_sweep_graySeq_sweeps';
+results_dir = '/Users/aybuke/Documents/MATLAB/ddra-cedim/experiments/results/data/kMSD_pe_sweep_graySeq_sweeps';
 [T, PS] = load_augmented(results_dir);
 audit_augmented(T, PS);
 % Core plots
@@ -20,4 +20,4 @@ paired_compare(T,'E3');
 % Export compact tables
 export_summary_tables(T, fullfile(results_dir,'analysis'));
 % Check against artifacts
-sanity_check_row(results_dir, 1);
+% sanity_check_row(results_dir, 1);
