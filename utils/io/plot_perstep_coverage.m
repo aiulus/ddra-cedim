@@ -1,28 +1,61 @@
-function fig = plot_perstep_coverage(PS)
-    % Try to detect coverage columns
-    vars = PS.Properties.VariableNames;
-    cgray = vars(contains(vars,'cov_gray') | contains(vars,'coverage_gray'));
-    cddra = vars(contains(vars,'cov_ddra') | contains(vars,'coverage_ddra'));
+function plot_perstep_coverage(PS)
+% Plot per-step coverage for Gray and DDRA with 95% CI bands.
 
-    assert(~isempty(cgray) && ~isempty(cddra), 'Coverage columns not found in per-step CSV.');
+    assert(all(ismember({'row','k','cov_gray','cov_ddra'}, PS.Properties.VariableNames)), ...
+        'PS must contain row,k,cov_gray,cov_ddra.');
 
-    % reshape into [nRows x nK]
-    [klist,~,kid] = unique(PS.k,'stable');
-    [rlist,~,rid] = unique(PS.row,'stable');
-    nk = numel(klist); nr = numel(rlist);
+    rows = unique(PS.row);
+    nk   = max(PS.k);
 
-    % helper to pivot
-    pivot = @(colname) accumarray([rid,kid], PS.(colname), [nr,nk], @mean, NaN);
+    % Pivot into matrices (#rows x nk)
+    Cg = nan(numel(rows), nk);
+    Cd = nan(numel(rows), nk);
+    for i = 1:numel(rows)
+        idx = PS.row == rows(i);
+        kk  = PS.k(idx);
+        Cg(i, kk) = PS.cov_gray(idx);
+        Cd(i, kk) = PS.cov_ddra(idx);
+    end
 
-    Cg = pivot(cgray{1});     % Gray per-row, per-k
-    Cd = pivot(cddra{1});     % DDRA per-row, per-k
+    % Means (omit NaNs)
+    mu_g = mean(Cg, 1, 'omitnan');
+    mu_d = mean(Cd, 1, 'omitnan');
 
-    mu_g = nanmean(Cg,1);  se_g = nanstd(Cg,[],1)/sqrt(nr);  ci_g = 1.96*se_g;
-    mu_d = nanmean(Cd,1);  se_d = nanstd(Cd,[],1)/sqrt(nr);  ci_d = 1.96*se_d;
+    % Per-step sample counts actually used
+    n_g  = sum(~isnan(Cg), 1);
+    n_d  = sum(~isnan(Cd), 1);
 
-    fig = figure('Color','w'); hold on; grid on;
-    k = klist(:)';
-    h1 = shadedErrorBar(k, mu_g, ci_g); h1.mainLine.DisplayName = 'Gray';
-    h2 = shadedErrorBar(k, mu_d, ci_d); h2.mainLine.DisplayName = 'DDRA';
-    xlabel('step k'); ylabel('coverage (%)'); title('Per-step coverage (VAL)'); legend('Location','southwest');
+    % Std dev with 'omitnan'; use population normalization so 1 sample -> 0
+    sd_g = std(Cg, 1, 1, 'omitnan');  % 2nd arg=1 => divide by N, not N-1
+    sd_d = std(Cd, 1, 1, 'omitnan');
+
+    % Standard error and 95% CI; guard n<1 and n<2
+    se_g = sd_g ./ sqrt(max(n_g, 1));
+    se_d = sd_d ./ sqrt(max(n_d, 1));
+    ci_g = 1.96 * se_g;
+    ci_d = 1.96 * se_d;
+
+    kvec = 1:nk;
+
+    figure; hold on; box on;
+    % Shaded CI for Gray
+    fill([kvec, fliplr(kvec)], [mu_g-ci_g, fliplr(mu_g+ci_g)], [0.9 0.9 1], ...
+         'EdgeColor','none','FaceAlpha',0.4);
+    % Shaded CI for DDRA
+    fill([kvec, fliplr(kvec)], [mu_d-ci_d, fliplr(mu_d+ci_d)], [0.9 1 0.9], ...
+         'EdgeColor','none','FaceAlpha',0.4);
+    % Means
+    plot(kvec, mu_g, '-', 'LineWidth', 2);
+    plot(kvec, mu_d, '-', 'LineWidth', 2);
+
+    ylim([0 100]);
+    xlabel('time step k');
+    ylabel('coverage (%)');
+    legend({'Gray 95% CI','DDRA 95% CI','Gray mean','DDRA mean'}, 'Location','SouthWest');
+    title('Per-step coverage with 95% CI (omit NaNs)');
+
+    % Optional: annotate effective sample sizes
+    txt = sprintf('Gray n_min=%d, n_max=%d | DDRA n_min=%d, n_max=%d', ...
+                  min(n_g), max(n_g), min(n_d), max(n_d));
+    annotation('textbox',[.15 .80 .7 .1],'String',txt,'LineStyle','none');
 end

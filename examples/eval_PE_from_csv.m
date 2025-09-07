@@ -1,4 +1,11 @@
-results_dir = '';
+%% TODO:
+% - Explanations on what each plot computes
+% - E4:E7
+% - Continue debugging from line 14 (boxplot)
+% - Include augment_metrics()
+
+
+% results_dir = '/Users/aybuke/Documents/MATLAB/ddra-cedim/experiments/results/data/kMSD_pe_sweep_graySeq_sweeps';
 [T, PS] = load_augmented(results_dir);
 audit_augmented(T, PS);
 % Core plots

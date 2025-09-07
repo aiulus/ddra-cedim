@@ -32,7 +32,6 @@ backup_once(csv_sum); backup_once(csv_ps);
 
 % --- Parameters for E3/E4 directional sampling
 L_dirs = 64;     % number of unit directions in output space
-rng(42);         % deterministic sampling for reproducibility
 
 for f = files'
     row_id = sscanf(f.name,'row_%d.mat');
@@ -87,7 +86,7 @@ for f = files'
     % =========================
     % E3/E4: Directional support ratios & Hausdorff (outer, sampled)
     % =========================
-    dirs = sample_unit_dirs(ny, L_dirs);
+    dirs = sample_unit_dirs(ny, L_dirs, 10000 + double(row_id));
     [supp_med_gray, supp_p90_gray, hdist_mean_gray, hdist_p90_gray] = ...
         support_and_hausdorff(sysG, sysT, VAL, W_pred, dirs, Kred);
     [supp_med_ddra, supp_p90_ddra, hdist_mean_ddra, hdist_p90_ddra] = ...
@@ -131,6 +130,13 @@ for f = files'
         S = addcol(S, 'supp_p90_ddra',   supp_p90_ddra,   rid);
         S = addcol(S, 'hdist_mean_ddra', hdist_mean_ddra, rid);
         S = addcol(S, 'hdist_p90_ddra',  hdist_p90_ddra,  rid);
+
+        % --- Backward-compatibility aliases for older analysis scripts ---
+        S = addcol(S, 'dir_eps_med_gray', supp_med_gray, rid);
+        S = addcol(S, 'dir_eps_p90_gray', supp_p90_gray, rid);
+        S = addcol(S, 'dir_eps_med_ddra', supp_med_ddra, rid);
+        S = addcol(S, 'dir_eps_p90_ddra', supp_p90_ddra, rid);
+
 
         % nominal error and ridge widening
         S = addcol(S, 'enom_mean', enom_mean, rid);
@@ -334,13 +340,15 @@ for j=1:ny
 end
 end
 
-function dirs = sample_unit_dirs(n, L)
-if n==1
-    dirs = [1; -1]; return;
+function dirs = sample_unit_dirs(n, L, seed)
+    if n==1
+        dirs = [1; -1]; return;
+    end
+    rng(double(seed), 'twister');            % per-row reproducibility
+    X = randn(n,L);
+    dirs = X ./ vecnorm(X);
 end
-X = randn(n,L);
-dirs = X ./ vecnorm(X);
-end
+
 
 function [supp_med, supp_p90, hmean, hp90] = support_and_hausdorff(sysG, sysT, VAL, W_pred, dirs, Kred)
 % Gray vs True directional support ratios & outer Hausdorff (sampled).
