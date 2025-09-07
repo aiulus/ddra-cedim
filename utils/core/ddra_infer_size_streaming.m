@@ -1,8 +1,13 @@
-function [sizeI_ddra, contain_pct, wid_ddra] = ...
+function [sizeI_ddra, contain_pct, wid_k] = ...
     ddra_infer_size_streaming(sys, R0, U_unused, W_in, M_AB, C, VAL)
 
     assert(nargin>=7 && ~isempty(VAL) && isfield(VAL,'u') && isfield(VAL,'y'), ...
         'ddra_infer_size_streaming: VAL (y,u,...) is required for synchronized validation.');
+
+    % --- accumulate per-time-step widths (align with Gray)
+    nk_global = max(cellfun(@(Ucell) size(Ucell,1), VAL.u));
+    wid_sums   = zeros(nk_global,1);
+    wid_counts = zeros(nk_global,1);
 
     nx = size(sys.A,1);
     m  = size(sys.B,2);
@@ -67,10 +72,13 @@ function [sizeI_ddra, contain_pct, wid_ddra] = ...
 
             % interval-hull width as size proxy
             IY   = interval(Yset);
-            w    = supremum(IY) - infimum(IY);                         % 1×ny widths
+            w    = supremum(IY) - infimum(IY);  % 1×ny widths
             v_k  = sum(w);                           % aggregate width
-            sizeI_ddra      = sizeI_ddra + v_k;
-            wid_ddra(end+1,1)= v_k;
+            % scalar width for this time step (sum of output interval widths)
+            sizeI_ddra       = sizeI_ddra + v_k;   % for global scalar (kept)
+            wid_sums(k)      = wid_sums(k)   + v_k;
+            wid_counts(k)    = wid_counts(k) + 1;
+
 
             % containment in interval hull of Yset
             y_meas = Yk(k,:).';
@@ -104,9 +112,10 @@ function [sizeI_ddra, contain_pct, wid_ddra] = ...
 
     contain_pct = (num_all > 0) * (100 * num_in / max(1,num_all));
     if num_all == 0, contain_pct = NaN; end
+    
+    sizeI_ddra = sizeI_ddra / max(1, num_all);         
+    wid_k      = wid_sums ./ max(1, wid_counts);       
 
-    % optional: return average size 
-    sizeI_ddra = sizeI_ddra / max(1,num_all);
 end
 
 % ---------- helpers ----------
@@ -122,3 +131,14 @@ end
 function val = getfielddef(S, fname, defaultVal)
     if isstruct(S) && isfield(S, fname); val = S.(fname); else; val = defaultVal; end
 end
+
+function tf = contains_interval(y, Yset, tol)
+    I = interval(Yset);
+    try
+        lo = infimum(I); hi = supremum(I);
+    catch
+        lo = I.inf; hi = I.sup;  % very old CORA
+    end
+    tf = all(y <= hi + tol) && all(y >= lo - tol);
+end
+

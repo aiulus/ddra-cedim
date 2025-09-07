@@ -12,9 +12,6 @@ function SUMMARY = run_sweeps(cfg, grid)
     csv_path = fullfile(results_dir, 'summary.csv');
     csv_perstep = fullfile(results_dir, 'summary_perstep.csv');
     if exist(csv_perstep,'file'), delete(csv_perstep); end
-    fid_ps = fopen(csv_perstep,'w');
-    fprintf(fid_ps, 'row,k,wid_ddra,wid_gray,ratio_gray_true\n');
-    fclose(fid_ps);
 
 
     % -------- Low-memory / IO toggles (with safe defaults) ---------------
@@ -22,7 +19,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     LM.gray_check_contain = getfielddef(LM, 'gray_check_contain', true);
     LM.store_ddra_sets    = getfielddef(LM, 'store_ddra_sets', true);
     LM.append_csv         = getfielddef(LM, 'append_csv', false);
-    LM.store_ddra_sets = false; 
+    %LM.store_ddra_sets = false; 
 
     % If streaming to CSV, start clean
     if LM.append_csv && exist(csv_path, 'file')
@@ -270,17 +267,20 @@ function SUMMARY = run_sweeps(cfg, grid)
                     W_used = zonotope(zeros(size(center(W_eff),1),1));
                 end
                 
-                % *** NEW: normalize to sys_cora BEFORE gray_identify ***
-                %W_for_gray = normalizeWForGray(sys_cora, W_used);
 
-                % If E == B, just pass U in disturbance space so E*W = B*U exactly
-                if ~isempty(sys_cora.E) && isequal(size(sys_cora.E), size(sys_cora.B)) && ...
-                        norm(sys_cora.E - sys_cora.B, 'fro') < 1e-12
-                    W_for_gray = U;                 % disturbance-dim = nu
+                % ---- Build W_for_gray only if disturbance channels exist ----
+                if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
+                    if ~isempty(sys_cora.E) && isequal(size(sys_cora.E), size(sys_cora.B)) && ...
+                            norm(sys_cora.E - sys_cora.B, 'fro') < 1e-12
+                        W_for_gray = U;                 % E == B --> pass U so E*W = B*U
+                    else
+                        W_for_gray = normalizeWForGray(sys_cora, W_used);  % conservative preimage
+                    end
                 else
-                    % Conservative preimage to disturbance space (guarantee E*Wd \supseteq W)
-                    W_for_gray = normalizeWForGray(sys_cora, W_used);
+                    W_for_gray = [];                    % no disturbance channels --> no override
                 end
+
+                
             
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
@@ -296,22 +296,47 @@ function SUMMARY = run_sweeps(cfg, grid)
                 idxGray = find(cellfun(@(c) isfield(c,'name') && want==string(c.name), configs), 1, 'first');
                 if isempty(idxGray), idxGray = min(2, numel(configs)); end
 
-                if ~isempty(configs{idxGray}.sys.E) && isequal(size(configs{idxGray}.sys.E), size(configs{idxGray}.sys.B)) && ...
-                        norm(configs{idxGray}.sys.E - configs{idxGray}.sys.B, 'fro') < 1e-12
-                    W_pred = U;                    % pass U in disturbance space (E=B)
+                % ---- Set W_pred only if identified Gray sys has disturbance channels ----
+                if isprop(configs{idxGray}.sys,'nrOfDisturbances') && configs{idxGray}.sys.nrOfDisturbances > 0
+                    if ~isempty(configs{idxGray}.sys.E) && isequal(size(configs{idxGray}.sys.E), size(configs{idxGray}.sys.B)) && ...
+                            norm(configs{idxGray}.sys.E - configs{idxGray}.sys.B, 'fro') < 1e-12
+                        W_pred = U;                    % E == B
+                    else
+                        W_pred = normalizeWForGray(configs{idxGray}.sys, W_used);
+                    end
                 else
-                    W_pred = normalizeWForGray(configs{idxGray}.sys, W_used);
+                    W_pred = [];
                 end
-
+                
                 if ~isfield(configs{idxGray},'params') || isempty(configs{idxGray}.params)
                     configs{idxGray}.params = struct();
                 end
-                configs{idxGray}.params.W = W_pred;
+                if ~isempty(W_pred)                     % only set when it's meaningful
+                    configs{idxGray}.params.W = W_pred;
+                end
 
-                fprintf('Reporting from line 257@run_sweeps.m. \n ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', ...
-                   sum(abs(generators(W_used)),'all'), ...
-                   sum(abs(sys_cora.E*generators(coerceWToSys(sys_cora, W_used))),'all'));
+                %fprintf('Reporting from line 257@run_sweeps.m. \n ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', ...
+                %   sum(abs(generators(W_used)),'all'), ...
+                %   sum(abs(sys_cora.E*generators(coerceWToSys(sys_cora, W_used))),'all'));
 
+                % ---- Debug prints ----
+                valE = 0;
+                if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
+                    try
+                        Wc = coerceWToSys(sys_cora, W_used);
+                        if isa(Wc,'zonotope')
+                            valE = sum(abs(sys_cora.E * generators(Wc)), 'all');
+                        end
+                    catch
+                        % leave valE = 0
+                    end
+                end
+                try
+                    valW = sum(abs(generators(W_used)),'all');
+                catch
+                    valW = 0;
+                end
+                fprintf('Reporting from run_sweeps: ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', valW, valE);
 
 
                 % Build VAL record (x0,u) from TS_val and pass to both sides
@@ -354,22 +379,28 @@ function SUMMARY = run_sweeps(cfg, grid)
                     sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
                 
                     if use_noise, W_plot = W_used; else, W_plot = zonotope(zeros(size(center(W_used),1),1)); end
-                
-                    reach_dir = fullfile(plots_dir,'reach'); if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
-                    savename = fullfile(reach_dir, sprintf('row_%04d_y%d%d', row_index, dims(1), dims(2)));
+                    %%
+                    reach_dir = fullfile(plots_dir,'reach');
+                    if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
+                    
+                    savename_png = fullfile(reach_dir, sprintf('row_%04d_y%d%d.png', row_index, dims(1), dims(2)));
+                    % (If save_plot also writes PDF, it can derive .pdf from this base. If not,
+                    % it will at least save a valid .png and not warn.)
+                    
                     optReach  = getfielddef(C.shared,'options_reach', struct());
                     orderCap  = getfielddef(optReach, 'zonotopeOrder', 100);
-                     
+                    
                     plot_reach_all_onepanel( ...
                         sys_true_dt, ...
                         configs{idxGray}.sys, ...
                         VAL, ...
                         'MAB', M_AB, ...
                         'W', W_used, ...
-                        'Dims', [1 2], ...
+                        'Dims', dims, ...
                         'ShowSamples', false, ...
-                        'Save', cfg.io.save_tag);
+                        'Save', savename_png);
 
+                    %%
                 end
 
     
@@ -426,7 +457,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     Tinfer = toc(t2);
 
                     % Ysets_ddra = Xsets_ddra;
-                    Ysets_ddra = cellfun(@(X) C.sys.C * X, Xsets_ddra, 'uni',0);
+                    Ysets_ddra = cellfun(@(X) sys_true_dt.C * X, Xsets_ddra, 'uni',0);
                     
                     vol_ddra  = cellfun(@(Z) norm(Z), Ysets_ddra);
                     sizeI_ddra = mean(vol_ddra(:));   % mean output-set volume across VAL
@@ -436,32 +467,31 @@ function SUMMARY = run_sweeps(cfg, grid)
                     cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, cfg.metrics.tol);
 
                     clear Xsets_ddra
-                else
-
-                    W_alg1 = W_used;             
+                else             
                     t2 = tic;
-                    [sizeI, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, [], W_alg1, M_AB, C, VAL);
+                    [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming(sys_ddra, R0, [], W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    sizeI_ddra_k = mean(wid_ddra, 2);
-                    sizeI_ddra   = mean(sizeI_ddra_k);
+                    sizeI_ddra_k = wid_ddra_k;     % keep per-step array for artifacts/CSV
                 end
 
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred);
-
                 Tinfer_g   = toc(t4);
                 
-                % --- Stream per-step metrics
+                % ---- Now stream per-step metrics (both available)
+                if ~exist(csv_perstep,'file') || dir(csv_perstep).bytes==0
+                    fid_h = fopen(csv_perstep,'w');
+                    fprintf(fid_h,'row,k,wid_ddra,wid_gray,ratio_gray_true\n');
+                    fclose(fid_h);
+                end
                 ratio_k = [];
                 if exist('artifact','var') && isfield(artifact,'metrics') && isfield(artifact.metrics,'ratio_gray_vs_true_k')
                     ratio_k = artifact.metrics.ratio_gray_vs_true_k;
                 end
                 nkv = numel(wid_gray_k);
-                if exist('sizeI_ddra_k','var')
-                    wid_ddra_k = sizeI_ddra_k;
-                else
+                if ~exist('wid_ddra_k','var') || numel(wid_ddra_k) ~= nkv
                     wid_ddra_k = nan(nkv,1);
                 end
                 if isempty(ratio_k), ratio_k = nan(nkv,1); end
@@ -470,11 +500,20 @@ function SUMMARY = run_sweeps(cfg, grid)
                 for kk = 1:nkv
                     fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g\n', row_index, kk, wid_ddra_k(kk), wid_gray_k(kk), ratio_k(kk));
                 end
-                fclose(fid_ps);
-
-
-                % if size(wid_ddra,1) ~= C.shared.n_k_val, wid_ddra = wid_ddra.'; end
+                fclose(fid_ps);    
                 
+                % --- Pack row ---
+                % ensure percentages
+                if (ctrain_gray <= 1), ctrain_gray = 100*ctrain_gray; end
+                if (cval_gray   <= 1), cval_gray   = 100*cval_gray;   end
+                if (cval_ddra   <= 1), cval_ddra   = 100*cval_ddra;   end
+
+                rowi = rowi + 1;      
+                row = pack_row(C, D, alpha_w, pe, ...
+                    ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
+                    Zinfo.rankZ, Zinfo.condZ, ...
+                    Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+
                 % --- Optional: save plotting artifact for this row ---
                 if isfield(cfg,'io') && isfield(cfg.io,'save_artifacts') && cfg.io.save_artifacts
                     % ensure folder
@@ -493,7 +532,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                       'n_k', C.shared.n_k, 'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2);
                     artifact.metrics.sizeI_gray_k = wid_gray_k;
                     if exist('sizeI_ddra_k','var'), artifact.metrics.sizeI_ddra_k = sizeI_ddra_k; end
-                    artifact.metrics.sizeI_gray_k = wid_gray_k;
 
                     try
                         % Per-step volume ratio: Gray vs True (averaged over blocks)
@@ -531,21 +569,9 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                     save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
 
-                end
-                
-                clear configs  % free Gray objects early
-                
-                % --- Pack row ---
-                % ensure percentages
-                if (ctrain_gray <= 1), ctrain_gray = 100*ctrain_gray; end
-                if (cval_gray   <= 1), cval_gray   = 100*cval_gray;   end
-                if (cval_ddra   <= 1), cval_ddra   = 100*cval_ddra;   end
+                    clear configs  
 
-                rowi = rowi + 1;      
-                row = pack_row(C, D, alpha_w, pe, ...
-                    ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
-                    Zinfo.rankZ, Zinfo.condZ, ...
-                    Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+                end
 
 
                 %% end patch
@@ -594,7 +620,5 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
 
 end
-
-
 
 

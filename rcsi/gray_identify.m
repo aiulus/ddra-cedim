@@ -97,28 +97,61 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     % ---- conformance options ----
     options      = C.shared.options_reach;
     options.cs   = C.shared.cs_base;
+
     if exist('aux_set_p_gray','file') == 2
         options.cs.set_p = @(p,params) aux_set_p_gray(p, params, C.shared.dyn, sys_cora);
-        % minimal p0 (only U-center if no numeric plant params)
-        options.cs.p0    = 0.01*randn(sys_cora.nrOfInputs,1);
-    end
-    if exist('aux_set_p_gray','file') == 2
-        options.cs.set_p = @(p,params) aux_set_p_gray(p, params, C.shared.dyn, sys_cora);
-    
+
+        % Parameter-aware initial guess: [model_params ; U-center]
         [~, ~, ~, p_t] = custom_loadDynamics(C.shared.dyn, "diag");
         if isnumeric(p_t) && ~isempty(p_t)
             n_model = numel(p_t);
             options.cs.p0 = [zeros(n_model,1); zeros(dim(params_id_init.U),1)];
         else
-            options.cs.p0 = zeros(dim(params_id_init.U),1);   % k-MSD as currently configured
+            % no numeric plant params -> only U-center is identified
+            options.cs.p0 = zeros(dim(params_id_init.U),1);
         end
         options.p_min = -2*ones(numel(options.cs.p0),1);
         options.p_max =  2*ones(numel(options.cs.p0),1);
     end
 
+    options.cs.p_min = -2*ones(numel(options.cs.p0),1);
+    options.cs.p_max =  2*ones(numel(options.cs.p0),1);
+
+
     % ---- identify (first gray method) ----
     type = C.gray.methodsGray(1);
     [params_hat, results] = conform(sys_cora, params_id_init, options, type);
+
+    if ~isempty(W_override) && results.sys.nrOfDisturbances==0
+        warning('overrideW provided but model has no disturbances; ignoring.');
+    end
+
+    % ---- apply overrideW to the returned config (if any) ----
+    if ~isempty(W_override) && results.sys.nrOfDisturbances > 0
+        try
+            d_in = size(center(W_override),1);
+            nw   = results.sys.nrOfDisturbances;
+            if d_in == nw
+                % Already in disturbance space -> use as-is
+                params_hat.W = W_override;
+            elseif ~isempty(results.sys.E) && size(results.sys.E,1) == d_in
+                % State-space W -> conservative preimage to disturbance space
+                if exist('normalizeWForGray','file') == 2
+                    params_hat.W = normalizeWForGray(results.sys, W_override);
+                else
+                    % very conservative fallback if helper missing
+                    params_hat.W = zonotope(zeros(nw,1));
+                end
+            else
+                % Incompatible dims -> safest fallback
+                params_hat.W = zonotope(zeros(nw,1));
+            end
+        catch
+            % Any failure -> zero-disturbance fallback
+            params_hat.W = zonotope(zeros(results.sys.nrOfDisturbances,1));
+        end
+    end
+
 
     % ---- pack configs ----
     configs = cell(2,1);

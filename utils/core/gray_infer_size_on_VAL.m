@@ -5,11 +5,9 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
 %   wid_k : n_k-by-1 = mean interval width per time step (avg across blocks)
 
     p = inputParser;
-    addParameter(p,'overrideW',[]);     % if provided, use this W (any space)
+    addParameter(p,'overrideW',[]);
     parse(p, varargin{:});
     W_override = p.Results.overrideW;
-
-    % base options: remove 'cs' before calling reach()
     options = getfielddef(C.shared,'options_reach', struct());
     if isfield(options,'cs'); options = rmfield(options,'cs'); end
 
@@ -24,18 +22,25 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
     acc = 0; 
     count = 0;
 
+    % --- zero-center R0 once
+    R0c = params_in.R0;
+    try
+        R0c = zonotope([zeros(size(center(R0c),1),1), generators(R0c)]);
+    catch
+        % if R0c is already zero-centered or not a zonotope, keep as-is
+    end
+
     for m = 1:numel(TS_val)
         tc = TS_val{m};
         nk = size(tc.y,1);
 
-        % --- representative initial state for this testcase (nx×1)
-        x0bar = mean(tc.initialState, 3);           % average over samples
-        % (alternative: tc.initialState(:,:,1))
+        % representative initial state for this testcase (nx×1)
+        x0bar = mean(tc.initialState, 3);   % or tc.initialState(:,:,1)
 
         % --- build params for this testcase
         params = struct();
-        params.R0     = params_in.R0 + x0bar;       % shift by vector (nx×1)
-        params.u      = tc.u.';                     % measured input, (nu×nk)
+        params.R0     = R0c + x0bar;        % shift by vector (nx×1)
+        params.u      = tc.u.';             % (nu×nk)
         params.tFinal = sys.dt * (nk-1);
 
         % input padding if model expects more channels
@@ -43,10 +48,10 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
         if du > 0
             params.u = [params.u; zeros(du, size(params.u,2))];
         elseif du < 0
-            params.u = params.u(1:sys.nrOfInputs, :);  % defensive
+            params.u = params.u(1:sys.nrOfInputs, :);
         end
 
-        % --- disturbance set W (required if nrOfDisturbances>0)
+        % disturbance set W
         if sys.nrOfDisturbances > 0
             if ~isempty(W_override)
                 params.W = coerceWToSys(sys, W_override);
@@ -57,55 +62,32 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
             end
         end
 
-        % --- reach in state space
-        R = reach(sys, params, options);            % CORA object
-        R = R.timePoint.set;                        % cell array of contSets
+        % --- reach & widths
+        R = reach(sys, params, options);
+        R = R.timePoint.set;
 
-        % --- per-step sizes and accumulation (avg across blocks only)
         for k = 1:nk
             Xk = R{k};
             if isempty(Xk) || ~isa(Xk,'contSet'), continue; end
-            % output map (or identity if C missing)
-            try
-                Yk = linearMap(Xk, sys.C);
-            catch
-                Yk = Xk;
-            end
+            try, Yk = linearMap(Xk, sys.C); catch, Yk = Xk; end
 
-            % interval width (sum over outputs)
             Ik = interval(Yk);
-            
-            % CORA-compatible: width = sup - inf
             try
-                lo = infimum(Ik);
-                hi = supremum(Ik);
+                lo = infimum(Ik); hi = supremum(Ik);
             catch
-                % very old CORA builds store fields directly
-                if isstruct(Ik) && isfield(Ik,'inf') && isfield(Ik,'sup')
-                    lo = Ik.inf;
-                    hi = Ik.sup;
-                else
-                    error('interval() returned an unexpected type; cannot extract bounds.');
-                end
+                lo = Ik.inf; hi = Ik.sup;  % very old CORA
             end
-            
-            wk = sum(max(hi - lo, 0));   % guard tiny negatives from numerics
+            wk = sum(max(hi - lo, 0));
 
             wid_sums(k)   = wid_sums(k)   + wk;
             wid_counts(k) = wid_counts(k) + 1;
 
-            % global scalar proxy uses the same widths
             acc   = acc   + wk;
             count = count + 1;
         end
     end
 
-    % outputs
-    if count==0
-        sizeI = NaN;
-    else
-        sizeI = acc / count;
-    end
+    sizeI = (count==0) * NaN + (count>0) * (acc / count);
     wid_k = wid_sums ./ max(1, wid_counts);
 end
 

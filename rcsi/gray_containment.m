@@ -47,11 +47,34 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
         TS_val = createTestSuite(sys_cora, p_val, C.shared.n_k_val, C.shared.n_m_val, C.shared.n_s_val, optTS);
     end
 
-    % ---- pick gray config index consistently ----
+    % ---- pick gray config index consistently (robust) ----
+    names = strings(numel(configs),1);
+    for ii = 1:numel(configs)
+        try
+            if isstruct(configs{ii}) && isfield(configs{ii},'name') && ~isempty(configs{ii}.name)
+                names(ii) = string(configs{ii}.name);
+            else
+                names(ii) = "";
+            end
+        catch
+            names(ii) = "";
+        end
+    end
+    
+    % prefer the first requested method if available; else fall back to "graySeq"; else 2
     want = "graySeq";
-    i_gray = find(cellfun(@(cfg) isstruct(cfg) && isfield(cfg,'name') ...
-                          && want==string(cfg.name), configs), 1);
-    if isempty(i_gray), i_gray = min(2, numel(configs)); end
+    if isstruct(C) && isfield(C,'gray') && isfield(C.gray,'methodsGray') && ~isempty(C.gray.methodsGray)
+        want = string(C.gray.methodsGray(1));
+        if numel(want) > 1, want = want(1); end
+    end
+    
+    i_gray = find(names == want, 1);
+    if isempty(i_gray)
+        i_gray = find(names == "graySeq", 1);
+        if isempty(i_gray)
+            i_gray = min(2, numel(configs));
+        end
+    end
 
 
     % ---- TRAIN ----

@@ -1,4 +1,4 @@
-function sizeI = gray_infer_size_on_VAL(sys, TS_val, C, params_in, varargin)
+function sizeI = gray_infer_excess_on_VAL(sys, TS_val, C, params_in, varargin)
 % Output-interval size proxy for Gray on the exact VAL points.
 % Uses measured inputs; always sets params.W if disturbances exist.
 

@@ -80,6 +80,7 @@ sweep_grid.n_k_list      = cfg.shared.n_k;
 PE_orders = [1 2 3 4 5 6 7 8 9 10];
 PE_orders = [3 4 5 6 7 8];
 PE_orders = [3 4 5];
+PE_orders = [3];
 sweep_grid.pe_list = [ ...
     arrayfun(@(L) struct('mode','sinwavecs','order',L,'strength',100,'deterministic',true), PE_orders, 'uni',0) ...
 ];
