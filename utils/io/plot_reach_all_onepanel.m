@@ -1,9 +1,13 @@
 function plot_reach_all_onepanel(sys_true, sys_gray, VAL, varargin)
-% PLOT_REACH_ALL_ONEPANEL (styled, arrows+visibility fixes)
+% PLOT_REACH_ALL_ONEPANEL
 
     % ---------- parse options ----------
+    %opt = struct('Block',1,'Dims',[1 2],'MAB',[],'W',[], ...
+    %             'Order',100,'Reduce','girard','ShowSamples',true,'Save','');
     opt = struct('Block',1,'Dims',[1 2],'MAB',[],'W',[], ...
-                 'Order',100,'Reduce','girard','ShowSamples',true,'Save','');
+             'Order',100,'Reduce','girard','ShowSamples',true,'Save','', ...
+             'ReachOptions',[]); 
+
     for i=1:2:numel(varargin)
         if isfield(opt,varargin{i}), opt.(varargin{i}) = varargin{i+1}; end
     end
@@ -55,25 +59,45 @@ function plot_reach_all_onepanel(sys_true, sys_gray, VAL, varargin)
     end
       
       
-    if isempty(opt.W), opt.W = zonotope(zeros(nx,1)); end
-    options = struct('zonotopeOrder', opt.Order, 'verbose', false);
+    % ---------- disturbances (prefer opt.W; else VAL.W; else empty) ----------
+    W_in = [];
+    if ~isempty(opt.W)
+        W_in = opt.W;
+    elseif isfield(VAL,'W') && ~isempty(VAL.W)
+        W_in = VAL.W;
+    end
+
+    % ---------- reach options (CORA) ----------
+    % Build a minimal options struct; allow caller to override via opt.ReachOptions.
+    options = struct('zonotopeOrder', opt.Order, 'reductionTechnique', opt.Reduce);
+    if isfield(opt,'ReachOptions') && ~isempty(opt.ReachOptions)
+        fns = fieldnames(opt.ReachOptions);
+        for ii = 1:numel(fns)
+            options.(fns{ii}) = opt.ReachOptions.(fns{ii});
+        end
+    end
 
     % ---------- TRUE reach ----------
     paramsT = struct('R0', R0_set + x0, 'u', U, ...
                      'tStart', 0, 'tFinal', sys_true.dt*(n_k-1));
-    if sys_true.nrOfDisturbances > 0 && isfield(VAL,'W') && ~isempty(VAL.W)
-        paramsT.W = VAL.W;
+    if sys_true.nrOfDisturbances > 0 && ~isempty(W_in)
+        paramsT.W = map_W_for_sys(sys_true, W_in);   % map to disturbance space
     end
     Rtrue = reach(sys_true, paramsT, options);
+
     Xtrue = Rtrue.timePoint.set;
     Ytrue = map_sets_to_output(Xtrue, Ctrue, Dtrue, U);
 
     % ---------- GRAY reach ----------
-    paramsG = paramsT;
-    if sys_gray.nrOfDisturbances > 0 && isfield(VAL,'W') && ~isempty(VAL.W)
-        paramsG.W = VAL.W;
-    else
-        paramsG = rmfield_if_exist(paramsG,'W');
+    paramsG = struct('R0', R0_set + x0, 'u', U, ...
+                     'tStart', 0, 'tFinal', sys_gray.dt*(n_k-1));
+    if sys_gray.nrOfDisturbances > 0 && ~isempty(W_in)
+        try
+            % map state-disturbance W into gray's disturbance space (conservative)
+            paramsG.W = normalizeWForGray(sys_gray, W_in);
+        catch
+            paramsG.W = W_in; % safe fallback if helper not available
+        end
     end
     Rgray = reach(sys_gray, paramsG, options);
     Xgray = Rgray.timePoint.set;
@@ -392,3 +416,56 @@ function S = rmfield_if_exist(S,f), if isfield(S,f), S = rmfield(S,f); end, end
 function [p,b] = split_pathbase(pathstr), [p,~,b] = fileparts(pathstr); end
 function p = fileparts2(s), [p,~] = split_pathbase(s); end
 function b = basename2(s), [~,b] = split_pathbase(s); end
+
+function Wd = map_W_for_sys(sys, Win)
+% Map a state-space or mismatched W into the disturbance space expected by CORA.
+% If Win is already q-dim (q = nrOfDisturbances), return it as-is.
+
+    % Dimensions
+    try
+        nx = size(sys.A,1);
+    catch
+        nx = size(center(Win),1);
+    end
+    try
+        q = max(0, sys.nrOfDisturbances);
+    catch
+        q = 0;
+    end
+    d = size(center(Win),1);
+
+    if q == 0
+        % System has no disturbance channels; return empty so CORA doesn't check it
+        Wd = [];
+        return;
+    end
+
+    if d == q
+        % Already in disturbance space
+        Wd = Win;
+        return;
+    end
+
+    if d == nx
+        % State-dimensional W: get a conservative preimage in disturbance space
+        try
+            % Preferred if available in your toolbox
+            Wd = coerceWToSys(sys, Win);
+        catch
+            % Fallback: normalizeWForGray builds a conservative disturbance-set preimage
+            Wd = normalizeWForGray(sys, Win);
+        end
+        return;
+    end
+
+    % Last resort: build a diagonal zonotope in q-dim using Win's radius
+    try
+        rad = sum(abs(generators(Win)), 2);
+        if isempty(rad), rad = 0; end
+        if isscalar(rad), rad = repmat(rad, q, 1); end
+        Wd = zonotope(zeros(q,1), diag(rad(1:q)));
+    catch
+        % If everything fails, drop W to avoid dimension errors
+        Wd = [];
+    end
+end

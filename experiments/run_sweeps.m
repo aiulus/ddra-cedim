@@ -58,20 +58,19 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % --- per-row deterministic seed (distinct datasets per sweep row) ---
                 row_index     = rowi + 1;             % the row we're about to produce
                 row_seed      = 10000 + row_index;    % any fixed offset is fine
-                C.shared.seed = row_seed;
                 rng(row_seed,'twister');
-            
-                % Make nominal PE input reproducible and L-dependent without freezing RNG
-                pe.deterministic = getfielddef(pe,'deterministic', true);
-                pe.seed_base = uint32(mod(100000 + 131*row_index + 977*ip + 1009*n_k + 7*n_s + 3*n_m, 2^31-1));
 
-    
                 % --- instantiate config for this run ---
                 C = baseC;
+                C.shared.seed = row_seed;
                 C.shared.n_m = n_m;  C.shared.n_s = n_s;  C.shared.n_k = n_k;
                 C.shared.n_m_val = max(2, min(n_m, getfielddef(baseC.shared, 'n_m_val', 2)));
                 C.shared.n_s_val = n_s;  C.shared.n_k_val = n_k;
                 C.ddra.alpha_w   = alpha_w;
+            
+                % Make nominal PE input reproducible and L-dependent without freezing RNG
+                pe.deterministic = getfielddef(pe,'deterministic', true);
+                pe.seed_base = uint32(mod(100000 + 131*row_index + 977*ip + 1009*n_k + 7*n_s + 3*n_m, 2^31-1));
                 
                 if C.shared.dyn == "k-Mass-SD"; C.shared.dyn_p = D; end
     
@@ -95,14 +94,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                     end
                 end
                 
-                % If order missing, use minimal and clamp by horizon
                 if ~isfield(pe,'order') || isempty(pe.order)
-                    nx = sys_cora.nrOfDims; pe.order = max(1, min(sys_cora.nrOfDims+1, C.shared.n_k-1));
+                    pe.order = max(1, min(sys_cora.nrOfDims+1, C.shared.n_k-1));
                 end
 
-
-                %% Old
-                % pe_eff = finalize_pe_order(pe, sys_cora, C);   % pass C, not cfg
                 %% New
                 pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k);
 
@@ -273,7 +268,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                 want_online = any(pmode == ["online","both"]) && getfielddef(cfg.io,'make_reach_plot',true);
                 if want_online && ismember(row_index, getfielddef(cfg.io,'plot_rows',[1]))
                     dims   = getfielddef(cfg.io,'plot_dims',[1 2]);
-                    everyK = getfielddef(cfg.io,'plot_every_k', 1);
                 
                     sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
                 
@@ -285,10 +279,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     savename_png = fullfile(reach_dir, sprintf('row_%04d_y%d%d.png', row_index, dims(1), dims(2)));
                     % (If save_plot also writes PDF, it can derive .pdf from this base. If not,
                     % it will at least save a valid .png and not warn.)
-                    
-                    optReach  = getfielddef(C.shared,'options_reach', struct());
-                    orderCap  = getfielddef(optReach, 'zonotopeOrder', 100);
-                    
+
                     plot_reach_all_onepanel( ...
                         sys_true_dt, ...
                         configs{idxGray}.sys, ...
@@ -297,9 +288,11 @@ function SUMMARY = run_sweeps(cfg, grid)
                         'W', W_plot, ...
                         'Dims', dims, ...
                         'ShowSamples', false, ...
-                        'Save', savename_png);
+                        'Save', savename_png, ...
+                        'ReachOptions', getfielddef(C.shared,'options_reach', ...
+                                            struct('zonotopeOrder',100,'reductionTechnique','girard')));
 
-                    %%
+
                 end
 
     
@@ -362,7 +355,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                     sizeI_ddra = mean(vol_ddra(:));   % mean output-set volume across VAL
 
                     % Containment should also be done in output-space:
-                    %cval_ddra = contains_on_VAL_linear(sys_true_dt, W_used, Ysets_ddra, VAL);  
                     cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, cfg.metrics.tol);
 
                     clear Xsets_ddra
@@ -378,6 +370,25 @@ function SUMMARY = run_sweeps(cfg, grid)
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred);
                 Tinfer_g   = toc(t4);
+
+                cov_ddra_k = []; cov_gray_k = []; fv_ddra = []; fv_gray = [];
+
+                if getfielddef(cfg.metrics,'enhanced', true)
+                    % GRAY per-step metrics from VAL only
+                    try
+                        [~, cov_gray_k, fv_gray, ~] = perstep_gray_metrics(configs{idxGray}.sys, VAL, W_pred, struct('zonotopeOrder',60));
+                    catch
+                        cov_gray_k = []; fv_gray = []; 
+                    end
+                
+                    % DDRA per-step metrics from VAL only (uses M_AB; fast)
+                    try
+                        [~, cov_ddra_k, fv_ddra, ~] = perstep_ddra_metrics(sys_true_dt, VAL, M_AB, W_used, 60);
+                    catch
+                        cov_ddra_k = []; fv_ddra = [];
+                    end
+                end
+
                 
                 % --- Pack row ---
                 % ensure percentages
@@ -390,6 +401,19 @@ function SUMMARY = run_sweeps(cfg, grid)
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
                     Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+
+                % Summaries (AUC_k and FV percentiles)
+                row.cov_auc_gray = mean(cov_gray_k, 'omitnan');
+                row.cov_auc_ddra = mean(cov_ddra_k, 'omitnan');
+                if ~isempty(fv_gray), row.fv_gray_med = median(fv_gray(~isinf(fv_gray))); else, row.fv_gray_med = NaN; end
+                if ~isempty(fv_ddra), row.fv_ddra_med = median(fv_ddra(~isinf(fv_ddra))); else, row.fv_ddra_med = NaN; end
+                
+                % Predeclare directional summaries so schema is stable (will be overwritten if computed)
+                row.dir_eps_med = NaN;
+                row.dir_eps_p90 = NaN;
+                row.hout_med    = NaN;
+                row.hout_p90    = NaN;
+
 
                 % --- Optional: save plotting artifact for this row ---
                 if isfield(cfg,'io') && isfield(cfg.io,'save_artifacts') && cfg.io.save_artifacts
@@ -408,6 +432,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                       'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
                       'n_k', C.shared.n_k, 'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2);
                     artifact.metrics.sizeI_gray_k = wid_gray_k;
+
                     if exist('sizeI_ddra_k','var'), artifact.metrics.sizeI_ddra_k = sizeI_ddra_k; end
 
                     try
@@ -438,28 +463,100 @@ function SUMMARY = run_sweeps(cfg, grid)
                                 end
                             end
                         end
+
+                        % --- Directional support / Hausdorff-outer (shape-aware) ---
+                        dir_cfg = getfielddef(cfg,'metrics',struct());
+                        dir_cfg = getfielddef(dir_cfg,'directional', struct('Nd',64,'seed',12345));
+                        Nd   = getfielddef(dir_cfg,'Nd',64);
+                        dseed= getfielddef(dir_cfg,'seed',12345);
+                        
+                        ny = size(sys_true_dt.C,1);
+                        Ddirs = sample_unit_dirs(ny, Nd, dseed); % (ny x Nd), unit directions
+                        
+                        dir_eps_all = [];   % accumulate eps over blocks x steps x dirs
+                        dir_del_all = [];   % accumulate delta over blocks x steps x dirs
+                        Hout_k = zeros(nkv,1); cnt_kH = zeros(nkv,1);
+                        
+                        for b = 1:numel(VAL.x0)
+                            Ublk = VAL.u{b};
+                            for k = 1:nkv
+                                uk = get_uk(Ublk, k, size(sys_true_dt.D,2)); % (m x 1)
+                        
+                                % True Y_k and Gray Y_k as zonotopes (outer-approx if needed)
+                                Yt_k = toZono(linearMap(Rt{k}, sys_true_dt.C));
+                                Yg_k = toZono(linearMap(Rg{k}, configs{idxGray}.sys.C));
+                        
+                                % Support values along all directions (vectorized)
+                                st = support_zono_vec(Ddirs, center(Yt_k), generators(Yt_k)) + Ddirs'*(sys_true_dt.D*uk);
+                                sg = support_zono_vec(Ddirs, center(Yg_k), generators(Yg_k)) + Ddirs'*(configs{idxGray}.sys.D*uk);
+                        
+                                eps_kd = sg ./ max(st, eps);
+                                del_kd = max(sg - st, 0);
+                        
+                                dir_eps_all = [dir_eps_all; eps_kd(:)]; 
+                                dir_del_all = [dir_del_all; del_kd(:)]; 
+
+                                Hout_k(k) = Hout_k(k) + max(del_kd);
+                                cnt_kH(k) = cnt_kH(k) + 1;
+                            end
+                        end
+                        
+                        artifact.metrics.dir_eps_med = median(dir_eps_all, 'omitnan');
+                        artifact.metrics.dir_eps_p90 = prctile(dir_eps_all, 90);
+                        artifact.metrics.hout_med    = median(dir_del_all, 'omitnan');
+                        artifact.metrics.hout_p90    = prctile(dir_del_all, 90);
+                        artifact.metrics.hout_k      = Hout_k ./ max(1,cnt_kH);
+
+                        % Overwrite row-level directional summaries now that we have them
+                        row.dir_eps_med = artifact.metrics.dir_eps_med;
+                        row.dir_eps_p90 = artifact.metrics.dir_eps_p90;
+                        row.hout_med    = artifact.metrics.hout_med;
+                        row.hout_p90    = artifact.metrics.hout_p90;
+
+
                         artifact.metrics.ratio_gray_vs_true_k = ratio_k ./ max(1, cnt_k);
                         
                     catch ME
                         warning(ME.message);
                     end
 
+                    % Make sure vectors exist before streaming
+                    if ~exist('wid_ddra_k','var'), wid_ddra_k = []; end
+                    if ~exist('wid_gray_k','var'), wid_gray_k = []; end
+                    if ~exist('cov_ddra_k','var'), cov_ddra_k = []; end
+                    if ~exist('cov_gray_k','var'), cov_gray_k = []; end
+                    if ~exist('ratio_k','var') || isempty(ratio_k)
+                        % fallback: try pull from artifact, else NaNs
+                        ratio_k = [];
+                        if exist('artifact','var') && isfield(artifact,'metrics') && isfield(artifact.metrics,'ratio_gray_vs_true_k')
+                            ratio_k = artifact.metrics.ratio_gray_vs_true_k;
+                        end
+                    end
+                   
                     save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
 
                     clear configs  
 
                 end
 
-                % NEW: always stream per-step CSV (ratio_k if available, else NaN)
+                % Ensure vectors exist
                 if ~exist('wid_ddra_k','var'), wid_ddra_k = []; end
+                if ~exist('wid_gray_k','var'), wid_gray_k = []; end
+                if ~exist('cov_ddra_k','var'), cov_ddra_k = []; end
+                if ~exist('cov_gray_k','var'), cov_gray_k = []; end
+                
+                % Try to pull ratio_k from artifact if it was computed; else leave empty
                 ratio_k = [];
                 if exist('artifact','var') && isfield(artifact,'metrics') && ...
-                       isfield(artifact.metrics,'ratio_gray_vs_true_k')
+                        isfield(artifact.metrics,'ratio_gray_vs_true_k')
                     ratio_k = artifact.metrics.ratio_gray_vs_true_k;
                 end
-                stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ratio_k);
+                
+                stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ...
+                               ratio_k, cov_ddra_k, cov_gray_k);
 
 
+                
                 %% end patch
                 row.use_noise = use_noise;
                 row.ddra_ridge       = ridgeInfo.used;
@@ -534,6 +631,24 @@ function SUMMARY = run_sweeps(cfg, grid)
         row.skipped     = true;
         row.skip_reason = string(reason);
         row.use_noise   = use_noise;
+
+        % Ensure schema stability for columns that appear in non-skip rows
+        row.cov_auc_gray = NaN;
+        row.cov_auc_ddra = NaN;
+        row.fv_gray_med  = NaN;
+        row.fv_ddra_med  = NaN;
+        
+        row.dir_eps_med  = NaN;
+        row.dir_eps_p90  = NaN;
+        row.hout_med     = NaN;
+        row.hout_p90     = NaN;
+        
+        % Ridge defaults (match non-skip rows)
+        row.ddra_ridge        = false;
+        row.ddra_lambda       = 0;
+        row.ddra_kappa        = NaN;
+        row.ddra_ridge_policy = "none";
+
     
         % attach any extra fields (e.g., ridge info)
         for k = 1:2:numel(varargin)
@@ -587,23 +702,29 @@ function SUMMARY = run_sweeps(cfg, grid)
     function ensure_perstep_header(csv_perstep)
         if ~exist(csv_perstep,'file') || dir(csv_perstep).bytes==0
             fid_h = fopen(csv_perstep,'w');
-            fprintf(fid_h,'row,k,wid_ddra,wid_gray,ratio_gray_true\n');
+            fprintf(fid_h,'row,k,wid_ddra,wid_gray,ratio_gray_true,cov_ddra,cov_gray\n');
             fclose(fid_h);
         end
     end
     
-    function stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ratio_k)
+    function stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ratio_k, cov_ddra_k, cov_gray_k)
         ensure_perstep_header(csv_perstep);
-        nkv = numel(wid_gray_k);
-        if ~exist('wid_ddra_k','var') || numel(wid_ddra_k) ~= nkv, wid_ddra_k = nan(nkv,1); end
-        if ~exist('ratio_k','var')     || numel(ratio_k)     ~= nkv, ratio_k     = nan(nkv,1); end
+        nkv = max([numel(wid_gray_k), numel(wid_ddra_k), numel(ratio_k), numel(cov_ddra_k), numel(cov_gray_k)]);
+        if isempty(wid_ddra_k), wid_ddra_k = nan(nkv,1); end
+        if isempty(wid_gray_k), wid_gray_k = nan(nkv,1); end
+        if isempty(ratio_k),    ratio_k    = nan(nkv,1); end
+        if isempty(cov_ddra_k), cov_ddra_k = nan(nkv,1); end
+        if isempty(cov_gray_k), cov_gray_k = nan(nkv,1); end
+    
         fid_ps = fopen(csv_perstep,'a');
         for kk = 1:nkv
-            fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g\n', row_index, kk, wid_ddra_k(kk), wid_gray_k(kk), ratio_k(kk));
+            fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g,%.12g,%.12g\n', ...
+                row_index, kk, wid_ddra_k(min(kk,end)), wid_gray_k(min(kk,end)), ...
+                ratio_k(min(kk,end)), cov_ddra_k(min(kk,end)), cov_gray_k(min(kk,end)));
         end
         fclose(fid_ps);
     end
-    
+
     function Wplot = pick_W_for_plot(W_used, use_noise)
         if use_noise, Wplot = W_used;
         else,        Wplot = zonotope(zeros(size(center(W_used),1),1));
@@ -617,6 +738,48 @@ function SUMMARY = run_sweeps(cfg, grid)
         end
         if vb, fprintf(varargin{:}); end
     end
+
+    function D = sample_unit_dirs(p, Nd, seed)
+        if nargin<3 || isempty(seed), seed = 12345; end
+        rng(seed,'twister');
+        X = randn(p, Nd);
+        n = sqrt(sum(X.^2,1)) + eps;
+        D = X ./ n;
+    end
+    
+    function s = support_zono_vec(Ddirs, c, G)
+    % Ddirs: (p x Nd), c: (p x 1), G: (p x g)
+        if isempty(G), s = Ddirs' * c; return; end
+        s = Ddirs' * c + sum(abs(Ddirs' * G), 2);
+    end
+    
+    function uk = get_uk(Ublk, k, m)
+        if m==0, uk = zeros(0,1); return; end
+        Ublk = squeeze(Ublk);
+        if size(Ublk,1) == m
+            uk = Ublk(:, min(k, size(Ublk,2)));
+        elseif size(Ublk,2) == m
+            uk = Ublk(min(k, size(Ublk,1)), :)';
+        else
+            error('get_uk: U has incompatible size for m=%d.', m);
+        end
+    end
+
+    function Z = toZono(S)
+    % Convert various CORA set types to a (conservative) zonotope.
+        if isa(S,'zonotope')
+            Z = S;
+        elseif isa(S,'polyZonotope') || isa(S,'conZonotope')
+            Z = zonotope(S);   % CORA outer-approx
+        else
+            try
+                Z = zonotope(S);
+            catch
+                error('toZono: unsupported set type %s', class(S));
+            end
+        end
+    end
+
 
 end
 
