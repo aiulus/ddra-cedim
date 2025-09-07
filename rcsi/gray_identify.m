@@ -81,6 +81,18 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
             struct('R0',R0,'U',U,'tFinal',params_true.tFinal), ...
             C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
     end
+    % === PACK FOR CORA gray (linearSysDT expects one testCase with n_m*n_s samples) ===
+    if isa(sys_cora,'linearSysDT')
+        S = params_id_init.testSuite;
+        if iscell(S) && numel(S) > 1 && size(S{1}.u,3) <= 1
+            params_id_init.testSuite = pack_for_gray(S);
+            % (optional sanity)
+            tc = params_id_init.testSuite{1};
+            fprintf('GRAY tc: y %s, u %s, x0 %s\n', ...
+                mat2str(size(tc.y)), mat2str(size(tc.u)), mat2str(size(tc.initialState)));
+            % Expect: y [n_k q n_m*n_s], u [n_k p n_m*n_s], x0 [nx 1 n_m*n_s]
+        end
+    end
 
     % ---- conformance options ----
     options      = C.shared.options_reach;
@@ -100,16 +112,9 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
         else
             options.cs.p0 = zeros(dim(params_id_init.U),1);   % k-MSD as currently configured
         end
+        options.p_min = -2*ones(numel(options.cs.p0),1);
+        options.p_max =  2*ones(numel(options.cs.p0),1);
     end
-
-
-
-    nx = sys_cora.nrOfDims; nu = sys_cora.nrOfInputs; ny = sys_cora.nrOfOutputs;
-    p0 = [sys_cora.A(:); sys_cora.B(:)];
-    options.cs.p0 = p0;
-    options.p_min = -2*ones(numel(p0),1);
-    options.p_max =  2*ones(numel(p0),1);
-
 
     % ---- identify (first gray method) ----
     type = C.gray.methodsGray(1);

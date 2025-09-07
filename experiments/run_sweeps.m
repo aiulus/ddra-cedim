@@ -16,6 +16,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     LM.gray_check_contain = getfielddef(LM, 'gray_check_contain', true);
     LM.store_ddra_sets    = getfielddef(LM, 'store_ddra_sets', true);
     LM.append_csv         = getfielddef(LM, 'append_csv', false);
+    LM.store_ddra_sets = false; 
 
     % If streaming to CSV, start clean
     if LM.append_csv && exist(csv_path, 'file')
@@ -30,7 +31,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     baseC.shared.pe_policy = getfielddef(baseC.shared,'pe_policy', ...
         ternary(is_pe_sweep_tag || has_forced, "explicit", "minimal"));
 
-function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
+    function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
 
 
     % Precompute for in-memory mode only
@@ -88,13 +89,12 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
 
                 % ================= DDRA =================
                 t0 = tic;
-                % NOTE: ddra_generate_data must return DATASET as 6th out:
                 % DATASET.x0_blocks{b}, DATASET.u_blocks{b} with block length n_k
-                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_ddra, sys_cora.dt, R0, U, pe_eff);
+                [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_ddra, sys_cora.dt, R0, U, pe_eff, sys_cora);
                 Tlearn = toc(t0);
     
                 % Build TRAIN and VAL suites deterministically from generator
-                TS_train = testSuite_fromDDRA(sys_cora, R0, DATASET, C.shared.n_k);
+                TS_train = testSuite_fromDDRA(sys_cora, R0, DATASET, C.shared.n_k, C.shared.n_m, C.shared.n_s);
 
                 if string(C.shared.pe_policy) == "explicit"
                     % Gate on the requested order when sweeping PE explicitly
@@ -142,9 +142,9 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                 C_val.shared.n_m = C.shared.n_m_val;
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
-                rng(row_seed+1,'twister');
-                [~,~,~,~,~, DATASET_val] = ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe_eff);
-                TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k);
+                rng(row_seed+1,'twister');[~,~,~,~,~, DATASET_val] = ...
+                        ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe_eff, sys_cora);
+                TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k, C_val.shared.n_m, C_val.shared.n_s);
                 fprintf('VAL suite: %d cases, n_k=%d (expects %d=m*s)\n', ...
                     numel(TS_val), size(TS_val{1}.y,1), C_val.shared.n_m*C_val.shared.n_s);
 
@@ -196,24 +196,25 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                     end
                 
                     % Skip inference (and optionally Gray) to keep grid aligned
-                    clear Xminus Uminus Xplus TS_train TS_val DATASET DATASET_val
+                    clear Xminus Xplus TS_train TS_val DATASET DATASET_val
                     continue;
                 end
                 
-                clear Xminus Uminus Xplus  % free data blocks early
+                clear Xminus Xplus  % free data blocks early
 
     
                 % ---- unified disturbance policy ----
                 % W_eff: from ddra_learn_Mab (may include ridge inflation)
+                % ---- unified disturbance policy (unchanged) ----
                 if resolve_use_noise(C.shared)
-                    W_used   = W_eff;           % both branches use effective W
+                    W_used = W_eff;    % state-dim nx
                 else
-                    W_used   = zonotope(zeros(size(center(W_eff),1),1)); % zero disturbance
+                    W_used = zonotope(zeros(size(center(W_eff),1),1));
                 end
-                W_for_gray = W_used;            % keep Gray and DDRA aligned at inference
-                %% Temporary fix: Overwrites the process noise on gray-box RCSI
-                W_for_gray = zonotope(zeros(sys_cora.nrOfDisturbances,1));
-
+                
+                % *** NEW: normalize to sys_cora BEFORE gray_identify ***
+                W_for_gray = normalizeWForGray(sys_cora, W_used);
+            
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
                 t3 = tic;
@@ -225,8 +226,15 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                 Tlearn_g = toc(t3);
                 
                 want = "graySeq";
-                idxGray = find(arrayfun(@(c) isfield(c{1},'method') && want==string(c{1}.method), configs), 1, 'first');
-                if isempty(idxGray), idxGray = 1; end
+                idxGray = find(cellfun(@(c) isfield(c,'name') && want==string(c.name), configs), 1, 'first');
+                if isempty(idxGray), idxGray = min(2, numel(configs)); end
+
+                W_pred = normalizeWForGray(configs{idxGray}.sys, W_used);
+                if ~isfield(configs{idxGray},'params') || isempty(configs{idxGray}.params)
+                    configs{idxGray}.params = struct();
+                end
+                configs{idxGray}.params.W = W_pred;
+
 
                 % Build VAL record (x0,u) from TS_val and pass to both sides
                 VAL = VAL_from_TS(TS_val, DATASET_val);
@@ -279,7 +287,7 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                         configs{idxGray}.sys, ...
                         VAL, ...
                         'MAB', M_AB, ...
-                        'W', W, ...
+                        'W', W_used, ...
                         'Dims', [1 2], ...
                         'ShowSamples', false, ...
                         'Save', cfg.io.save_tag);
@@ -290,17 +298,39 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                 % ---- Gray validation on EXACT same points (contains_interval metric)
                 % CORA's validateReach (internally splits multi-sample testCases)
                 do_plot = any(lower(string(getfielddef(cfg.io,'plot_mode','offline'))) == ["online","both"]);
-                ps_args = {};
+                
                 if do_plot
                     PS = struct();
-                    % Optional: thin the workload
-                    % PS.k_plot = 1:cfg.io.plot_every_k:C.shared.n_k_val; 
-                    % PS.dims   = getfielddef(cfg.io,'plot_dims',[1 2]);
+                    PS.k_plot   = 1:C.shared.n_k_val;                     % <- plot all steps
+                    PS.dims     = getfielddef(cfg.io,'plot_dims',[1 2]);  % <- 2D slice
+                    PS.plot_Yp  = false;                                  % <- like the example
                     ps_args = {'plot_settings', PS};
                 else
-                    % IMPORTANT: pass [] to suppress plotting
-                    ps_args = {'plot_settings', []};
+                    ps_args = {'plot_settings', []};  % truly suppress plotting
                 end
+
+                %% Debug prints
+                % 1) How many disturbance channels did the Gray model end up with?
+                fprintf('Gray: nrOfDisturbances = %d, size(E) = [%d %d]\n', ...
+                    configs{idxGray}.sys.nrOfDisturbances, size(configs{idxGray}.sys.E));
+                
+                % 2) What is the dimension of W_for_gray you pass in?
+                if isa(W_for_gray,'zonotope')
+                    fprintf('W_for_gray dim = %d, #gens = %d\n', size(center(W_for_gray),1), size(generators(W_for_gray),2));
+                else
+                    disp('W_for_gray is empty or not a zonotope');
+                end
+                
+                % 3) How big is W_true vs W_for_gray?
+                if isa(W_eff,'zonotope')
+                    r_true = sum(abs(generators(W_eff)), 'all');
+                    fprintf('||W_eff.generators||_1 = %.3g\n', r_true);
+                end
+                if isa(W_for_gray,'zonotope')
+                    r_gray = sum(abs(generators(W_for_gray)), 'all');
+                    fprintf('||W_for_gray.generators||_1 = %.3g\n', r_gray);
+                end
+                %% End - Debug prints
                 
                 [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
                     configs, sys_cora, R0_cora, U, C, pe_eff, ...
@@ -309,7 +339,6 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                     'check_contain',    true,     ...
                     ps_args{:});
 
-              
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
                 if LM.store_ddra_sets
@@ -318,32 +347,32 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                     [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
 
-                    Ysets_ddra =  Xsets_ddra;
-
-                    % If you model output noise V as a zonotope, inflate here:
-                    % Ysets_ddra = cellfun(@(Y) Y + V, Ysets_ddra, 'uni', 0);
+                    % Ysets_ddra = Xsets_ddra;
+                    Ysets_ddra = cellfun(@(X) C.sys.C * X, Xsets_ddra, 'uni',0);
                     
-                    wid_ddra = cellfun(@(Z) sum(abs(generators(Z)), 'all'), Ysets_ddra);
-                    sizeI_ddra = mean(wid_ddra(:));
+                    vol_ddra  = cellfun(@(Z) norm(Z), Ysets_ddra);
+                    sizeI_ddra = mean(vol_ddra(:));   % mean output-set volume across VAL
+
                     % Containment should also be done in output-space:
                     %cval_ddra = contains_on_VAL_linear(sys_true_dt, W_used, Ysets_ddra, VAL);  
                     cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, 1e-6);
 
                     clear Xsets_ddra
                 else
+
+                    W_alg1 = W_used;             
                     t2 = tic;
-                    [~, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, U, W_used, M_AB, C, VAL);
+                    [sizeI, cval_ddra, wid_ddra] = ddra_infer_size_streaming(sys_ddra, R0, [], W_alg1, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    sizeI_ddra = mean(wid_ddra(:)); 
+                    sizeI_ddra = mean(wid_ddra(:));
                 end
 
-    
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 %% Start patch
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
                 sizeI_gray = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
-                    configs{idxGray}.params, 'overrideW', W_for_gray);
+                    configs{idxGray}.params, 'overrideW', W_pred);
 
                 Tinfer_g   = toc(t4);
                 
@@ -376,7 +405,7 @@ function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
                 if (cval_gray   <= 1), cval_gray   = 100*cval_gray;   end
                 if (cval_ddra   <= 1), cval_ddra   = 100*cval_ddra;   end
 
-                rowi = rowi + 1;
+                rowi = rowi + 1;      
                 row = pack_row(C, D, alpha_w, pe, ...
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...

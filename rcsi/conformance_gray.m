@@ -163,8 +163,24 @@ function R = conformance_gray(lookup, conf_opts)
     plot_settings.plot_Yp = false;
     plot_settings.dims    = [1 2];
     plot_settings.name    = sprintf("Gray-Box Conformance: %s", dyn);
-    if ~isfield(plot_settings,'k_plot'), plot_settings.k_plot = []; end
-    
+
+    do_plot = any(lower(string(getfielddef(cfg.io,'plot_mode','offline'))) == ["online","both"]);
+
+    if do_plot
+        PS = struct();
+        PS.k_plot   = 1:C.shared.n_k_val;                     % <- plot all steps
+        PS.dims     = getfielddef(cfg.io,'plot_dims',[1 2]);  % <- 2D slice
+        PS.plot_Yp  = false;                                  % <- like the example
+        ps_args = {'plot_settings', PS};
+    else
+        ps_args = {'plot_settings', []};  % truly suppress plotting
+    end
+
+    if ~isfield(plot_settings,'k_plot'), plot_settings.k_plot = 1:n_k_val; end
+    if ~isfield(plot_settings,'dims'),   plot_settings.dims    = [1 2];    end
+    if ~isfield(plot_settings,'plot_Yp'),plot_settings.plot_Yp = false;    end
+
+
     check_contain = getfieldwithdefault(conf_opts, 'check_contain', true);
     
     if isLinear

@@ -1,59 +1,42 @@
-function TS = testSuite_fromDDRA(sys_cora, ~, DATASET, n_k_override)
-% Build CORA testCase objects from DATASET.
-% Accepts BOTH new (x0_list/U_blocks/Y_blocks) and old (x0_blocks/u_blocks) layouts.
+function TS = testSuite_fromDDRA(sys, R0, DATASET, n_k, n_m, n_s)
+% testSuite_fromDDRA
+% Maps DDRA DATASET blocks to a CORA-compatible test suite.
+%
+% Contract this function enforces for CORA/gray:
+%   TS{m}.y : (n_k × n_y × n_s)  measured outputs for test case m
+%   TS{m}.u : (n_k × n_u)        single *nominal* input for test case m
+%   TS{m}.initialState : (n_x × 1) nominal initial state (center(R0) or 0)
+%
+% All *per-sample* inputs remain available in DATASET.U_blocks and are
+% consumed when building VAL for DDRA; CORA/gray uses only the nominal u.
 
-    % --- detect layout & define accessors ---
-    if isfield(DATASET,'x0_list') && isfield(DATASET,'U_blocks')
-        M       = size(DATASET.x0_list, 2);
-        get_x0  = @(b) DATASET.x0_list(:, b);              % (n_x×1)
-        get_U   = @(b) DATASET.U_blocks(:, :, b);          % (n_u×n_k)
-        have_Y  = isfield(DATASET,'Y_blocks');
-        if have_Y, get_Y = @(b) DATASET.Y_blocks(:, :, b); % (n_y×n_k)
-        end
-        n_k_ds  = size(DATASET.U_blocks, 2);
-    elseif isfield(DATASET,'x0_blocks') && isfield(DATASET,'u_blocks')
-        M       = numel(DATASET.x0_blocks);
-        get_x0  = @(b) DATASET.x0_blocks{b};               % (n_x×1)
-        get_U   = @(b) DATASET.u_blocks{b};                % (n_u×n_k)
-        have_Y  = false;
-        n_k_ds  = size(get_U(1), 2);
+ny = DATASET.n_y; nu = DATASET.n_u; dt = sys.dt;
+TS = cell(n_m,1);
+
+use_center = (exist('center','file') && isa(R0,'zonotope'));
+if use_center
+    x0_nom = center(R0);
+else
+    x0_nom =  zeros(DATASET.dim_x,1);
+end
+
+for m = 1:n_m
+    % y: gather all samples for this nominal test case
+    y_m = zeros(n_k, ny, n_s);
+    for s = 1:n_s
+        idx = (m-1)*n_s + s;                    
+        y_m(:,:,s) = DATASET.Y_blocks(:,:,idx).';   % transpose to (n_k×n_y)
+    end
+
+    % u: pick the *nominal* trajectory (2D)
+    if isfield(DATASET,'U_nom_all') && numel(DATASET.U_nom_all) >= m && ~isempty(DATASET.U_nom_all{m})
+        u_m = DATASET.U_nom_all{m}.';           % (n_k×n_u)
     else
-        error('testSuite_fromDDRA: DATASET missing x0/U fields.');
+        % fallback: use the first sample's input as nominal
+        idx0 = (m-1)*n_s + 1;
+        u_m  = DATASET.U_blocks(:,:,idx0).';     % (n_k×n_u)
     end
 
-    % --- pick horizon ---
-    if nargin >= 4 && ~isempty(n_k_override)
-        n_k = n_k_override;
-    else
-        n_k = n_k_ds;
-    end
-
-    % --- construct testCase objects ---
-    ny  = sys_cora.nrOfOutputs;
-    TS  = cell(1, M);
-    for b = 1:M
-        x0   = get_x0(b);         % (n_x×1)
-        Ublk = get_U(b);          % (n_u×n_k)
-
-        % match requested horizon by crop/pad (rare)
-        if size(Ublk,2) > n_k, Ublk = Ublk(:,1:n_k); end
-        if size(Ublk,2) < n_k, Ublk = [Ublk, zeros(size(Ublk,1), n_k-size(Ublk,2))]; end
-
-        % CORA testCase expects time-major u: (a×p×s) = (n_k × n_u × 1)
-        u_tc = reshape(Ublk.', n_k, size(Ublk,1), 1);
-
-        % Measured outputs y: (a×q×s) = (n_k × n_y × 1)
-        if have_Y
-            %Yblk = get_Y(b);            % (n_y×n_k)
-            %y_tc = reshape(Yblk.', n_k, ny, 1);
-            y_tc = permute(DATASET.Y_blocks(:,:,b), [2 1 3]);
-        else
-            % Fallback: if DATASET has no Y, hand in NaNs (RCSI can still reach/compare)
-            %y_tc = nan(n_k, ny, 1);
-            y_tc = nan(n_k, ny, 1);
-        end
-
-        % Create the actual CORA testCase object
-        TS{b} = testCase(y_tc, u_tc, x0, sys_cora.dt, class(sys_cora));
-    end
+    TS{m} = testCase(y_m, u_m, x0_nom, dt, class(sys));
+end
 end

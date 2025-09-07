@@ -102,7 +102,7 @@ sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 %sweep_grid.n_m_list = [2 4 8 16 32 64 128];
 sweep_grid.n_m_list = 2:2:20;
-sweep_grid.n_s_list = 5;
+sweep_grid.n_s_list = 4;
 %sweep_grid.n_k_list = 2:2:20;
 sweep_grid.n_k_list = 10;
 sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
@@ -136,7 +136,6 @@ disp([SUMMARY.cval_gray SUMMARY.cval_ddra])
 disp([SUMMARY.sizeI_gray SUMMARY.sizeI_ddra])
 
 %% ---------- Visualization: auto-detect axis (n_m / n_k / n_s) ----------
-% Which axis varies?
 vary_nm = numel(unique(sweep_grid.n_m_list)) > 1;
 vary_nk = numel(unique(sweep_grid.n_k_list)) > 1;
 vary_ns = numel(unique(sweep_grid.n_s_list)) > 1;
