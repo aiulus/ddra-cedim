@@ -238,7 +238,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 catch
                     valW = 0;
                 end
-                fprintf('Reporting from run_sweeps: ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', valW, valE);
+                %fprintf('Reporting from run_sweeps: ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', valW, valE);
 
 
                 % Build VAL record (x0,u) from TS_val and pass to both sides
@@ -315,25 +315,25 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 %% Debug prints
                 % 1) How many disturbance channels did the Gray model end up with?
-                fprintf('Gray: nrOfDisturbances = %d, size(E) = [%d %d]\n', ...
-                    configs{idxGray}.sys.nrOfDisturbances, size(configs{idxGray}.sys.E));
+                %fprintf('Gray: nrOfDisturbances = %d, size(E) = [%d %d]\n', ...
+                %    configs{idxGray}.sys.nrOfDisturbances, size(configs{idxGray}.sys.E));
                 
                 % 2) What is the dimension of W_for_gray you pass in?
-                if isa(W_for_gray,'zonotope')
-                    fprintf('W_for_gray dim = %d, #gens = %d\n', size(center(W_for_gray),1), size(generators(W_for_gray),2));
-                else
-                    disp('W_for_gray is empty or not a zonotope');
-                end
+                %if isa(W_for_gray,'zonotope')
+                %    fprintf('W_for_gray dim = %d, #gens = %d\n', size(center(W_for_gray),1), size(generators(W_for_gray),2));
+                %else
+                %    disp('W_for_gray is empty or not a zonotope');
+                %end
                 
                 % 3) How big is W_true vs W_for_gray?
-                if isa(W_eff,'zonotope')
-                    r_true = sum(abs(generators(W_eff)), 'all');
-                    fprintf('||W_eff.generators||_1 = %.3g\n', r_true);
-                end
-                if isa(W_for_gray,'zonotope')
-                    r_gray = sum(abs(generators(W_for_gray)), 'all');
-                    fprintf('||W_for_gray.generators||_1 = %.3g\n', r_gray);
-                end
+                %if isa(W_eff,'zonotope')
+                %    r_true = sum(abs(generators(W_eff)), 'all');
+                %    fprintf('||W_eff.generators||_1 = %.3g\n', r_true);
+                %end
+                %if isa(W_for_gray,'zonotope')
+                %    r_gray = sum(abs(generators(W_for_gray)), 'all');
+                %    fprintf('||W_for_gray.generators||_1 = %.3g\n', r_gray);
+                %end
                 %% End - Debug prints
                 
                 [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
@@ -570,7 +570,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % --- Initialize schema & write/accumulate ----
                 write_row(row, csv_path, LM);
-                fprintf('[%s] row %d/%d (%.1f%%) | elapsed %s | ETA %s | avg/row %.2fs | tag=%s\n', ...
+                fprintf('[%s] row %d/%d (%.1f%%) | elapsed %s | ERA %s | avg/row %.2fs | tag=%s\n', ...
                         datestr(now,'HH:MM:SS'), rowi, NALL, 100*rowi/NALL, ...
                         char(duration(0,0,toc(t0_all),'Format','hh:mm:ss')), ...
                         char(duration(0,0,(NALL-rowi)*(toc(t0_all)/max(rowi,1)),'Format','hh:mm:ss')), ...
