@@ -53,7 +53,7 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
 
         % disturbance set W
         if sys.nrOfDisturbances > 0
-            if ~isempty(W_override)
+            if ~isa(W_override, 'emptySet')
                 params.W = coerceWToSys(sys, W_override);
             elseif isfield(params_in,'W') && ~isempty(params_in.W)
                 params.W = coerceWToSys(sys, params_in.W);
@@ -68,7 +68,7 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
 
         for k = 1:nk
             Xk = R{k};
-            if isempty(Xk) || ~isa(Xk,'contSet'), continue; end
+            if isa(Xk, 'emptyset') || ~isa(Xk,'contSet'), continue; end
             try, Yk = linearMap(Xk, sys.C); catch, Yk = Xk; end
 
             Ik = interval(Yk);

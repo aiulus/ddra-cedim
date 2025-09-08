@@ -95,7 +95,7 @@ function [sizeI_ddra, contain_pct, wid_k] = ...
             end
 
             % sanity check: disturbance dim must match state dim
-            if ~isempty(Wk)
+            if ~isa(Wk, 'emptySet')
                 assert(size(center(Wk),1) == nx, 'W dim %d ≠ nx %d', size(center(Wk),1), nx);
             end
             if iscell(W_in)

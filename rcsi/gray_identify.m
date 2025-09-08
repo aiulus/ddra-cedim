@@ -38,7 +38,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
                            'check_contain', C.lowmem.gray_check_contain, ...
                            'plot_settings', struct('k_plot', []));   % << key
 
-        if ~isempty(W_override), conf_opts.W = W_override; end
+        if ~isa(W_override, 'emptyset'), conf_opts.W = W_override; end
         lookup = struct('sys',sys_cora,'dyn',C.shared.dyn,'R0',R0,'U',U, ...
                         'n_m',C.shared.n_m,'n_s',C.shared.n_s,'n_k',C.shared.n_k, ...
                         'n_m_val',C.shared.n_m_val,'n_s_val',C.shared.n_s_val,'n_k_val',C.shared.n_k_val, ...
@@ -110,19 +110,19 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
             % no numeric plant params -> only U-center is identified
             options.cs.p0 = zeros(dim(params_id_init.U),1);
         end
-        options.p_min = -2*ones(numel(options.cs.p0),1);
-        options.p_max =  2*ones(numel(options.cs.p0),1);
+        %options.p_min = -2*ones(numel(options.cs.p0),1);
+        %options.p_max =  2*ones(numel(options.cs.p0),1);
     end
 
-    options.cs.p_min = -2*ones(numel(options.cs.p0),1);
-    options.cs.p_max =  2*ones(numel(options.cs.p0),1);
+    %options.cs.p_min = -2*ones(numel(options.cs.p0),1);
+    %options.cs.p_max =  2*ones(numel(options.cs.p0),1);
 
 
     % ---- identify (first gray method) ----
     type = C.gray.methodsGray(1);
     [params_hat, results] = conform(sys_cora, params_id_init, options, type);
 
-    if ~isempty(W_override) && results.sys.nrOfDisturbances==0
+    if ~isa(W_override, 'emptySet') && results.sys.nrOfDisturbances==0
         warning('overrideW provided but model has no disturbances; ignoring.');
     end
 

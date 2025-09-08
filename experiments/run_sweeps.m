@@ -28,6 +28,9 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     % -------- Sweep axes & base config -----------------------------------
     [axes, baseC] = init_sweep_axes(cfg, grid);
+    t0_all = tic;
+    NALL = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * numel(axes.n_s) * numel(axes.n_k) * numel(axes.pe);
+
     if ~isfield(cfg,'metrics') || ~isfield(cfg.metrics,'tol'), cfg.metrics.tol = 1e-6; end
     % ---- PE policy: explicit for "pe_sweep", minimal otherwise unless forced ----
     is_pe_sweep_tag = contains(lower(string(getfielddef(cfg.io,'save_tag',""))), 'pe_sweep');
@@ -567,6 +570,12 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % --- Initialize schema & write/accumulate ----
                 write_row(row, csv_path, LM);
+                fprintf('[%s] row %d/%d (%.1f%%) | elapsed %s | ETA %s | avg/row %.2fs | tag=%s\n', ...
+                        datestr(now,'HH:MM:SS'), rowi, NALL, 100*rowi/NALL, ...
+                        char(duration(0,0,toc(t0_all),'Format','hh:mm:ss')), ...
+                        char(duration(0,0,(NALL-rowi)*(toc(t0_all)/max(rowi,1)),'Format','hh:mm:ss')), ...
+                        toc(t0_all)/max(rowi,1), char(getfielddef(cfg.io,'save_tag','')));
+
 
                 clear M_AB Zinfo sizeI_ddra sizeI_gray TS_train TS_val DATASET DATASET_val VAL
               end
