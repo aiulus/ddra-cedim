@@ -64,13 +64,9 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
                 dim_x   = size(sys.A,1);
                 dim_col = size(sys.A,2) + size(sys.B,2);
                 Gr      = eps_scale * ones(dim_x, dim_col);
-                if isempty(M_AB.G)
-                    G3 = Gr;              % (dim_x x dim_col) -> treated as one slice
-                else
-                    G3 = cat(3, M_AB.G, Gr);
-                end
+                Gr = reshape(Gr, dim_x, dim_col, 1);
+                if isempty(M_AB.G), G3 = Gr; else, G3 = cat(3, M_AB.G, Gr); end
                 M_AB = matZonotope(M_AB.center, G3);
-
             case 'W'
                 % Inflate process noise W by adding a generator of magnitude eps_scale
                 if isa(W_in,'zonotope')

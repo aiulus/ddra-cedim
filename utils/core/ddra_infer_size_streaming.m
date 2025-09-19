@@ -98,13 +98,14 @@ function [sizeI_ddra, contain_pct, wid_k] = ...
             if ~isa(Wk, 'emptySet')
                 assert(size(center(Wk),1) == nx, 'W dim %d ≠ nx %d', size(center(Wk),1), nx);
             end
+            % replace the "W_const" block with:
             if iscell(W_in)
-                warning('Algorithm 1 expects constant Zw; using W_in{1} for all k.');
-                W_const = W_in{1};
+                Wk = W_in{k};
             else
-                W_const = W_in;
+                Wk = W_in;
             end
-            Xnext = M_AB * cartProd(X, U_pt) + W_const;     % DDRA-LTI: x_{k+1} ∈ M_AB * [x_k;u_k] \oplus W_k
+            Xnext = M_AB * cartProd(X, U_pt) + Wk;
+
             Xnext = reduce(Xnext, 'girard', Kred);
             X = Xnext;
         end
