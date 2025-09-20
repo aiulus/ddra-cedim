@@ -49,7 +49,10 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
     hdr  = {};
     rowi = 0;
-
+    % Force explicit PE whenever there are multiple PE orders
+    % on the grid
+    is_multi_pe = numel(axes.pe) > 1;
+    if is_multi_pe, baseC.shared.pe_policy = "explicit"; end
     % ------------------------ Main sweeps --------------------------------
     for D = axes.D
       for alpha_w = axes.alpha_w
@@ -58,10 +61,21 @@ function SUMMARY = run_sweeps(cfg, grid)
             for n_k = axes.n_k
               for ip = 1:numel(axes.pe)
                 pe = axes.pe{ip};
-                % --- per-row deterministic seed (distinct datasets per sweep row) ---
-                row_index     = rowi + 1;             % the row we're about to produce
-                row_seed      = 10000 + row_index;    % any fixed offset is fine
+                row_index = rowi + 1;
+                
+                C = baseC;   % <-- make C first, then compute seed from C & pe
+                tag = getfielddef(getfielddef(cfg,'io',struct()),'save_tag','');
+                
+                row_seed = stable_seed( ...
+                    D, ...
+                    alpha_w, ...
+                    pe, ...                                
+                    getfielddef(C.shared,'dyn',""), ...
+                    getfielddef(C.shared,'type',""), ...
+                    tag);
+                
                 rng(row_seed,'twister');
+
 
                 % --- instantiate config for this run ---
                 C = baseC;
@@ -73,8 +87,8 @@ function SUMMARY = run_sweeps(cfg, grid)
             
                 % Make nominal PE input reproducible and L-dependent without freezing RNG
                 pe.deterministic = getfielddef(pe,'deterministic', true);
-                pe.seed_base = uint32(mod(100000 + 131*row_index + 977*ip + 1009*n_k + 7*n_s + 3*n_m, 2^31-1));
-                
+                pe.seed_base = uint32(mod( double(row_seed) + 131*double(getfielddef(pe,'order',0)) + 977*double(ip), 2^31-1 ));
+
                 if C.shared.dyn == "k-Mass-SD"; C.shared.dyn_p = D; end
     
                 % --- Build true systems ---
@@ -120,8 +134,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                     % Gate on the effective minimal sufficient order
                     Lgate = pe_eff.order;
                 end
+
+                % DEBUG STATEMENT
+                fprintf('L requested=%g  effective=%g  policy=%s\n', ...
+                    getfielddef(pe,'order',NaN), Lgate, string(C.shared.pe_policy));
+               
                 okPE = check_PE_order(TS_train, Lgate);
 
+                
                 if ~okPE
                     % mark and skip this row to keep the grid aligned
                     emit_skip_row("PE_not_satisfied");
@@ -242,7 +262,28 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 
                 % Build VAL record (x0,u) from TS_val and pass to both sides
-                VAL = VAL_from_TS(TS_val, DATASET_val);
+                % VAL = VAL_from_TS(TS_val, DATASET_val);
+                VAL = pack_VAL_from_TS(TS_val);
+
+                fprintf('VAL(flat) m*s=%d  nk=%d  hash=%s\n', ...
+                     numel(VAL.y), size(VAL.y{1},1), val_hash(VAL));
+    
+                % DEBUG SEQUENCE - START
+                % Quick internal parity check (non-fatal; hits breakpoint if mismatch)
+                % --- Debug: VAL parity check (non-fatal)
+                try
+                    Vcanon = pack_VAL_from_TS(TS_val);
+                    okVAL  = strcmp(val_hash(VAL), val_hash(Vcanon));
+                    if ~okVAL
+                        warning('VAL != canonical(TS_val) — check pack_VAL_from_TS / TS construction.');
+                    end
+                catch ME
+                    % If val_hash is missing, just warn (don't stop experiments)
+                    warning(ME.identifier, '%s',  ME.message);
+                end
+
+                % DEBUG SEQUENCE - END
+
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
                 % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
                 row_index = rowi + 1;
@@ -336,12 +377,12 @@ function SUMMARY = run_sweeps(cfg, grid)
                 %end
                 %% End - Debug prints
                 
-                [ctrain_gray, cval_gray, Tvalidate_g] = gray_containment( ...
-                    configs, sys_cora, R0_cora, U, C, pe_eff, ...
-                    'externalTS_train', TS_train, ...
-                    'externalTS_val',   TS_val,   ...
-                    'check_contain',    true,     ...
-                    ps_args{:});
+                [ctrain_gray, cval_gray, Tvalidate_g, VAL] = gray_containment( ...
+                                configs, sys_cora, R0_cora, U, C, pe_eff, ...
+                                'externalTS_train', TS_train, ...
+                                'externalTS_val',   TS_val,   ...
+                                'check_contain',    true,     ...
+                                ps_args{:});
 
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
@@ -680,34 +721,23 @@ function SUMMARY = run_sweeps(cfg, grid)
         if isempty(idxGray), idxGray = min(2, numel(configs)); end
     end
     
-    function Wfg = build_W_for_gray(sys_cora, U, W_used)
-        % Your E==B fast-path + fallback mapping + no-disturbance guard
+    function Wfg = build_W_for_gray(sys_cora, ~, W_used)
+        % Map state-noise W_used -> disturbance space so E*Wfg \supseteq W_used.
         if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
-            if ~isempty(sys_cora.E) && isequal(size(sys_cora.E), size(sys_cora.B)) && ...
-                    norm(sys_cora.E - sys_cora.B, 'fro') < 1e-12
-                Wfg = U;                 % exact: E*W = B*U
-            else
-                Wfg = normalizeWForGray(sys_cora, W_used);  % conservative preimage
-            end
+            Wfg = normalizeWForGray(sys_cora, W_used);
         else
-            Wfg = [];                    % no disturbance channels
+            Wfg = [];
         end
     end
     
-    function Wpred = build_W_pred(gray_sys, U, W_used)
-        % Same idea as build_W_for_gray, but on the identified model
+    function Wpred = build_W_pred(gray_sys, ~, W_used)
         if isprop(gray_sys,'nrOfDisturbances') && gray_sys.nrOfDisturbances > 0
-            if ~isempty(gray_sys.E) && isequal(size(gray_sys.E), size(gray_sys.B)) && ...
-                    norm(gray_sys.E - gray_sys.B, 'fro') < 1e-12
-                Wpred = U;
-            else
-                Wpred = normalizeWForGray(gray_sys, W_used);
-            end
+            Wpred = normalizeWForGray(gray_sys, W_used);
         else
             Wpred = [];
         end
     end
-    
+
     function ensure_perstep_header(csv_perstep)
         if ~exist(csv_perstep,'file') || dir(csv_perstep).bytes==0
             fid_h = fopen(csv_perstep,'w');
@@ -792,4 +822,75 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 end
 
+function s = stable_seed(D, alpha_w, pe, dyn, typ, tag)
+    o     = double(getfielddef(pe,'order',0));
+    smode = double(sum(char(string(getfielddef(pe,'mode','')))));
+    dyn   = char(string(dyn));
+    typ   = char(string(typ));
+    tag   = char(string(tag));
+    s64   = uint64(1469598103934665603);
+    K     = uint64([D, round(alpha_w*1e6), o, smode, sum(double(dyn)), sum(double(typ)), sum(double(tag))]);
+    for v = K
+        s64 = bitxor(s64, uint64(v));
+        s64 = s64 * 1099511628211;
+    end
+    s = uint32(mod(s64, uint64(2^31-1))); if s==0, s=1; end
+end
 
+
+function h = val_hash(v)
+%VAL_HASH Deterministic hash of structs/cells/arrays for parity checks.
+% Returns lowercase hex SHA-256 string.
+
+    md = java.security.MessageDigest.getInstance('SHA-256');
+    feed(md, v);
+    h = lower(reshape(dec2hex(typecast(md.digest(),'uint8'))',1,[]));
+end
+
+function feed(md, v)
+    if isnumeric(v) || islogical(v)
+        % shape + class + raw bytes
+        updateStr(md, class(v));
+        updateIntVec(md, int64(size(v)));
+        if ~isempty(v)
+            b = typecast(v(:), 'uint8');  % column-major
+            md.update(b);
+        end
+    elseif ischar(v)
+        updateStr(md, 'char'); md.update(uint8(v(:)));
+    elseif isstring(v)
+        updateStr(md, 'string');
+        for s = v(:).'
+            feed(md, char(s));
+        end
+    elseif iscell(v)
+        updateStr(md, 'cell'); updateIntVec(md, int64(size(v)));
+        for i = 1:numel(v), feed(md, v{i}); end
+    elseif isstruct(v)
+        updateStr(md, 'struct'); updateIntVec(md, int64(size(v)));
+        f = sort(fieldnames(v));
+        for k = 1:numel(f)
+            fn = f{k}; md.update(uint8(fn));
+            for i = 1:numel(v)
+                feed(md, v(i).(fn));
+            end
+        end
+    elseif isa(v,'zonotope')
+        % If you ever hash sets: reduce to center/generators
+        try
+            feed(md, center(v)); feed(md, generators(v));
+        catch
+            updateStr(md, class(v));
+        end
+    else
+        % Fallback to class+num2str (last resort)
+        updateStr(md, ['<', class(v), '>']);
+        try
+            feed(md, num2str(v));
+        catch
+        end
+    end
+end
+
+function updateStr(md, s), md.update(uint8(s)); end
+function updateIntVec(md, v), md.update(typecast(v(:),'uint8')); end

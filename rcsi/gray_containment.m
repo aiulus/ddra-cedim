@@ -97,15 +97,15 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
 end
 
 % ---- Helpers ----
-function VAL = pack_VAL_from_TS(TS)
-    B = numel(TS);
-    VAL = struct('x0',{cell(1,B)},'u',{cell(1,B)},'y',{cell(1,B)});
-    for b = 1:B
-        VAL.x0{b} = TS{b}.initialState;
-        VAL.u{b}  = squeeze(TS{b}.u(:,:,1));
-        VAL.y{b}  = squeeze(TS{b}.y(:,:,1));
-    end
-end
+% function VAL = pack_VAL_from_TS(TS)
+%     B = numel(TS);
+%     VAL = struct('x0',{cell(1,B)},'u',{cell(1,B)},'y',{cell(1,B)});
+%     for b = 1:B
+%         VAL.x0{b} = TS{b}.initialState;
+%         VAL.u{b}  = squeeze(TS{b}.u(:,:,1));
+%         VAL.y{b}  = squeeze(TS{b}.y(:,:,1));
+%     end
+% end
 
 % ---- evaluator (mirrors CORA example usage) ----
 function [num_out_vec, num_all] = eval_suite(TS, configs, CC, PS)

@@ -68,23 +68,21 @@ function [sizeI, wid_k] = gray_infer_size_on_VAL(sys, TS_val, C, params_in, vara
 
         for k = 1:nk
             Xk = R{k};
-            if isa(Xk, 'emptyset') || ~isa(Xk,'contSet'), continue; end
+            if isa(Xk,'emptyset') || ~isa(Xk,'contSet'), continue; end
             try, Yk = linearMap(Xk, sys.C); catch, Yk = Xk; end
-
-            Ik = interval(Yk);
-            try
-                lo = infimum(Ik); hi = supremum(Ik);
-            catch
-                lo = Ik.inf; hi = Ik.sup;  % very old CORA
+            % Add pre-update feedthrough (does not change widths but makes Y_k explicit)
+            uk = params.u(:,k);
+            if isfield(sys,'D') && ~isempty(sys.D)
+                Yk = Yk + sys.D * uk;
             end
+            Ik = interval(Yk);
+            try, lo = infimum(Ik); hi = supremum(Ik); catch, lo = Ik.inf; hi = Ik.sup; end
             wk = sum(max(hi - lo, 0));
-
             wid_sums(k)   = wid_sums(k)   + wk;
             wid_counts(k) = wid_counts(k) + 1;
-
-            acc   = acc   + wk;
-            count = count + 1;
+            acc = acc + wk; count = count + 1;
         end
+
     end
 
     sizeI = (count==0) * NaN + (count>0) * (acc / count);
