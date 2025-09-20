@@ -406,6 +406,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     t2 = tic;
                     [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming(sys_ddra, R0, [], W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
+                    [ sizeI_ddra, wid_ddra_k ] = normalize_widths(wid_ddra_k, size(sys_true_dt.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
                     sizeI_ddra_k = wid_ddra_k;     % keep per-step array for artifacts/CSV
                 end
 
@@ -414,6 +415,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred);
                 Tinfer_g   = toc(t4);
+                [ sizeI_gray, wid_gray_k ] = normalize_widths(wid_gray_k, size(configs{idxGray}.sys.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
 
                 cov_ddra_k = []; cov_gray_k = []; fv_ddra = []; fv_gray = [];
 
