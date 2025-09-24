@@ -71,7 +71,7 @@ cfg.shared.n_k_val = 5;
 % DDRA noise setup (fixed)
 cfg.ddra = struct();
 cfg.ddra.eta_w   = 1;      % number of W generators
-cfg.ddra.alpha_w = 0.50;   % W scale
+cfg.ddra.alpha_w = 1.50;   % W scale
 % --- DDRA ridge guard (defaults) ---
 cfg.ddra.allow_ridge   = true;   % if false and rank-deficient -> skip point
 cfg.ddra.lambda        = 1e-8;    % ridge lambda when allowed
@@ -86,21 +86,20 @@ rcsi_lbl = rcsi_label_from_cfg(cfg);
 cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);  
 
 % --- shared noise policy to keep DDRA/Gray comparable when not studying noise
-cfg.shared.noise_for_gray = false;   % if false => Gray/RCSI runs with W = 0
-cfg.shared.noise_for_ddra = true;    % DDRA uses W unless this is set to false
-cfg.shared.use_noise = false;   % or true
+cfg.shared.noise_for_gray = true;   % false <=> W = 0
+cfg.shared.noise_for_ddra = true;   % false <=> W = 0
+cfg.shared.use_noise = true;   % or true
 
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
 sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
-%sweep_grid.n_m_list = [2 4 8 16 32 64 128];
 sweep_grid.n_m_list = 2:2:20;
-sweep_grid.n_m_list = 2:2:6;
+sweep_grid.n_m_list = 10;
 sweep_grid.n_s_list = 4;
-%sweep_grid.n_k_list = 2:2:20;
-sweep_grid.n_k_list = 20;
+sweep_grid.n_k_list = 4:1:20;
+%sweep_grid.n_k_list = 20;
 sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles

@@ -32,7 +32,8 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_
     % --- Disturbance set W: push forward input uncertainty through B  (W = B*U)
     if resolve_use_noise(C.shared)
         G_U = generators(U);                 % (nu × r)
-        G_W = sys_ddra.B * G_U;              % (nx × r)
+        %G_W = sys_ddra.B * G_U;              % (nx × r)
+        G_W = linearMap(sys_ddra.B, G_U);
         W   = zonotope(zeros(nx,1), G_W);    % zero center; growth only
     else
         W   = zonotope(zeros(nx,1));

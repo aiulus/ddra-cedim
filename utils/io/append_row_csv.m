@@ -1,7 +1,9 @@
 function append_row_csv(csv_path, hdr, row)
     out = cell(1, numel(hdr));
+    
     for j = 1:numel(hdr)
-        v = row.(hdr{j});
+        if ~isfield(row, hdr{j}), v = []; else, v = row.(hdr{j}); end
+        % v = row.(hdr{j});
         if isstring(v), v = char(v); end
         out{j} = local_to_str(v);
     end

@@ -1,5 +1,18 @@
 function [sizeI_ddra, contain_pct, wid_k] = ...
     ddra_infer_size_streaming(sys, R0, U_unused, W_in, M_AB, C, VAL)
+    
+    % --- defensive defaults so dot-indexing never hits non-structs ---
+    if ~exist('C','var') || ~isstruct(C), C = struct(); end
+    if ~isfield(C,'shared') || ~isstruct(C.shared), C.shared = struct(); end
+    if ~isfield(C,'metrics') || ~isstruct(C.metrics), C.metrics = struct(); end
+    if ~isfield(C.metrics,'width_agg') || isempty(C.metrics.width_agg)
+        C.metrics.width_agg = "sum";
+    end
+    if ~isfield(C,'lowmem') || ~isstruct(C.lowmem), C.lowmem = struct(); end
+    if ~isfield(C.lowmem,'zonotopeOrder_cap') || isempty(C.lowmem.zonotopeOrder_cap)
+        C.lowmem.zonotopeOrder_cap = 50;
+    end
+
 
     assert(nargin>=7 && ~isempty(VAL) && isfield(VAL,'u') && isfield(VAL,'y'), ...
         'ddra_infer_size_streaming: VAL (y,u,...) is required for synchronized validation.');
@@ -12,10 +25,10 @@ function [sizeI_ddra, contain_pct, wid_k] = ...
     nx = size(sys.A,1);
     m  = size(sys.B,2);
 
-    LM     = getfielddef(C,'lowmem',struct());
-    ordCap = getfielddef(LM,'zonotopeOrder_cap', ...
-                 getfielddef(C.shared.options_reach,'zonotopeOrder',100));
-    Kred   = min(100, ordCap);
+    % Use the lowmem cap only; avoid dot-chaining through C.shared.options_reach
+    LM      = getfielddef(C,'lowmem',struct());
+    ordCap  = getfielddef(LM,'zonotopeOrder_cap', 100);
+    Kred    = max(1, min(100, round(ordCap)));
 
     cR = center(R0);
     if any(abs(cR) > 1e-12)
@@ -41,7 +54,7 @@ function [sizeI_ddra, contain_pct, wid_k] = ...
 
     sizeI_ddra = 0; wid_ddra = [];
     num_in = 0; num_all = 0;
-    tol = 1e-6;
+    tol = getfielddef(getfielddef(C,'metrics',struct()),'tol',1e-6);
 
     B = numel(VAL.x0);
     for b = 1:B
@@ -70,10 +83,11 @@ function [sizeI_ddra, contain_pct, wid_k] = ...
             % --- OUTPUT at time k uses PRE-UPDATE state X ---
             Yset = Cmat*X + Dmat*u_k;
 
-            % interval-hull width as size proxy
+            % interval-hull width proxy: SUM across outputs (canonical internal form)
             IY   = interval(Yset);
             w    = supremum(IY) - infimum(IY);  % 1×ny widths
-            v_k  = sum(w);                           % aggregate width
+            v_k  = sum(w);
+
             % scalar width for this time step (sum of output interval widths)
             sizeI_ddra       = sizeI_ddra + v_k;   % for global scalar (kept)
             wid_sums(k)      = wid_sums(k)   + v_k;

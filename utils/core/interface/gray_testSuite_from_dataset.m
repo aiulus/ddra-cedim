@@ -5,8 +5,11 @@ function TS = gray_testSuite_from_dataset(sys, R0, DATASET)
 %   .y             (n_k x n_y x 1)      -- measurement samples for containment counting
 %   .initialState  (dim_x x 1)          -- added to R0 inside validateReach
 
-    dim_x = DATASET.dim_x;  n_k = DATASET.n_k;  M = DATASET.n_blocks;
-    n_u   = DATASET.n_u;    n_y = DATASET.n_y;
+    assert(isstruct(DATASET) && isfield(DATASET,'n_k'), 'DATASET must be struct with n_k (got %s)', typestr(DATASET));
+
+
+    n_k = DATASET.n_k;  M = DATASET.n_blocks;
+    n_y = DATASET.n_y;
 
     TS = cell(M,1);
     for i = 1:M
@@ -18,6 +21,7 @@ function TS = gray_testSuite_from_dataset(sys, R0, DATASET)
         tc.u = ui;
         tc.y = reshape(yi, [n_k, n_y, 1]);                 % (n_k x n_y x 1)
         tc.initialState = xi0;                             % (dim_x x 1)
+        tc.sampleTime   = sys.dt;  
 
         % minimal fields used by validateReach; R0 comes via configs{i}.params.R0
         TS{i} = tc;

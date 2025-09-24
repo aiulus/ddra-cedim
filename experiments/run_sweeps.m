@@ -34,9 +34,11 @@ function SUMMARY = run_sweeps(cfg, grid)
     if ~isfield(cfg,'metrics') || ~isfield(cfg.metrics,'tol'), cfg.metrics.tol = 1e-6; end
     % ---- PE policy: explicit for "pe_sweep", minimal otherwise unless forced ----
     is_pe_sweep_tag = contains(lower(string(getfielddef(cfg.io,'save_tag',""))), 'pe_sweep');
-    has_forced = any(cellfun(@(p) isfield(p,'force_order') && p.force_order, axes.pe));
+    has_forced = any(cellfun(@(p) isfield(p,'force_order') && p.force_order, axes.pe)) ...
+          || any(cellfun(@(p) isfield(p,'order_gate')   && ~isempty(p.order_gate), axes.pe));
     baseC.shared.pe_policy = getfielddef(baseC.shared,'pe_policy', ...
         ternary(is_pe_sweep_tag || has_forced, "explicit", "minimal"));
+
 
     function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
 
@@ -188,17 +190,17 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 
                 % Fairness: if ridge would inflate MAB and we're not mirroring it into Gray, skip row for both
-                if isfield(ridgeInfo,'used') && ridgeInfo.used && ...
-                   isfield(ridgeInfo,'policy') && string(ridgeInfo.policy)=="inflate_MAB"
-                    emit_skip_row("ridge_inflate_MAB_unmirrored", ...
-                        'ddra_ridge',true, ...
-                        'ddra_lambda',ridgeInfo.lambda, ...
-                        'ddra_kappa',ridgeInfo.kappa, ...
-                        'ddra_ridge_policy',char(ridgeInfo.policy));
-                    clear Xminus Xplus TS_train TS_val DATASET DATASET_val
-                    continue;
-
-                end
+                % if isfield(ridgeInfo,'used') && ridgeInfo.used && ...
+                %    isfield(ridgeInfo,'policy') && string(ridgeInfo.policy)=="inflate_MAB"
+                %     emit_skip_row("ridge_inflate_MAB_unmirrored", ...
+                %         'ddra_ridge',true, ...
+                %         'ddra_lambda',ridgeInfo.lambda, ...
+                %         'ddra_kappa',ridgeInfo.kappa, ...
+                %         'ddra_ridge_policy',char(ridgeInfo.policy));
+                %     clear Xminus Xplus TS_train TS_val DATASET DATASET_val
+                %     continue;
+                % 
+                % end
 
                 
                 % If rank-deficient and allow_ridge = false, skip this sweep point
@@ -278,8 +280,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % VAL = VAL_from_TS(TS_val, DATASET_val);
                 VAL = pack_VAL_from_TS(TS_val);
 
-                fprintf('VAL(flat) m*s=%d  nk=%d  hash=%s\n', ...
-                     numel(VAL.y), size(VAL.y{1},1), val_hash(VAL));
+                %fprintf('VAL(flat) m*s=%d  nk=%d  hash=%s\n', ...
+                %     numel(VAL.y), size(VAL.y{1},1), val_hash(VAL));
+                fprintf('VAL(flat) m*s=%d  nk=%d\n', ...
+                     numel(VAL.y), size(VAL.y{1},1));
     
                 % DEBUG SEQUENCE - START
                 % Quick internal parity check (non-fatal; hits breakpoint if mismatch)
@@ -303,24 +307,24 @@ function SUMMARY = run_sweeps(cfg, grid)
                 artdir = fullfile(results_dir, 'artifacts');
                 if ~exist(artdir,'dir'), mkdir(artdir); end
                 
-                % normalize “true” to linearSysDT for consistent on-disk schema
                 sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
-                
                 artifact = struct();
-                artifact.sys_gray = configs{idxGray}.sys;     % RCSI/Gray (linearSysDT)
-                artifact.sys_ddra = sys_true_dt;        % “true” model (linearSysDT)
-                artifact.VAL      = VAL;                % exact (x0,u,y) used on VAL
-                artifact.W_eff    = W_eff;              % effective W used by DDRA
-                artifact.M_AB     = M_AB;               % matrix zonotope for DDRA
-                artifact.meta     = struct( ...
-                    'row', row_index, 'dt', sys_true_dt.dt, ...
-                    'D', D, 'alpha_w', alpha_w, ...
-                    'n_m', C.shared.n_m, 'n_s', C.shared.n_s, 'n_k', C.shared.n_k, ...
-                    'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2 );
+                artifact.sys_gray = configs{idxGray}.sys;
+                artifact.sys_ddra = sys_true_dt;
+                artifact.VAL      = VAL;                % exact VAL used
+                artifact.W_eff    = W_used;
+                artifact.M_AB     = M_AB;
+                artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
+                    'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, ...
+                    'n_s', C.shared.n_s, 'n_k', C.shared.n_k, 'pe', pe, ...
+                    'save_tag', cfg.io.save_tag, 'schema', 2);
                 
-                % include R0/U so the plotter can exactly reproduce reach
-                artifact.VAL.R0 = R0; 
+                artifact.VAL.R0 = R0;    
                 artifact.VAL.U  = U;
+                
+                save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
+
+
 
                 want_online = any(pmode == ["online","both"]) && getfielddef(cfg.io,'make_reach_plot',true);
                 if want_online && ismember(row_index, getfielddef(cfg.io,'plot_rows',[1]))
@@ -366,29 +370,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                 else
                     ps_args = {'plot_settings', []};  % truly suppress plotting
                 end
-
-                %% Debug prints
-                % 1) How many disturbance channels did the Gray model end up with?
-                %fprintf('Gray: nrOfDisturbances = %d, size(E) = [%d %d]\n', ...
-                %    configs{idxGray}.sys.nrOfDisturbances, size(configs{idxGray}.sys.E));
-                
-                % 2) What is the dimension of W_for_gray you pass in?
-                %if isa(W_for_gray,'zonotope')
-                %    fprintf('W_for_gray dim = %d, #gens = %d\n', size(center(W_for_gray),1), size(generators(W_for_gray),2));
-                %else
-                %    disp('W_for_gray is empty or not a zonotope');
-                %end
-                
-                % 3) How big is W_true vs W_for_gray?
-                %if isa(W_eff,'zonotope')
-                %    r_true = sum(abs(generators(W_eff)), 'all');
-                %    fprintf('||W_eff.generators||_1 = %.3g\n', r_true);
-                %end
-                %if isa(W_for_gray,'zonotope')
-                %    r_gray = sum(abs(generators(W_for_gray)), 'all');
-                %    fprintf('||W_for_gray.generators||_1 = %.3g\n', r_gray);
-                %end
-                %% End - Debug prints
                 
                 [ctrain_gray, cval_gray, Tvalidate_g, VAL] = gray_containment( ...
                                 configs, sys_cora, R0_cora, U, C, pe_eff, ...
@@ -399,39 +380,69 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
-                % ---- DDRA inference (stored or streaming) on SAME validation points
+                % START PATCH
                 if LM.store_ddra_sets
                     t2 = tic;
-                    [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_used, M_AB, C, VAL);
+                
+                    % same reduction policy as streaming
+                    ordCap = getfielddef(getfielddef(C,'lowmem',struct()), 'zonotopeOrder_cap', 100);
+                    Kred   = max(1, min(100, round(ordCap)));
+                
+                    nkv        = C.shared.n_k_val;
+                    m          = size(sys_true_dt.D,2);
+                    Bv         = numel(VAL.x0);
+                    wid_sums   = zeros(nkv,1);
+                    wid_counts = zeros(nkv,1);
+                
+                    % containment counters (exactly like streaming)
+                    num_in = 0; num_all = 0; tol = getfielddef(cfg.metrics,'tol',1e-6);
+                
+                    % PRE-update loop mirroring streaming
+                    for b = 1:Bv
+                        Xk = reduce(VAL.R0 + VAL.x0{b}, 'girard', Kred);  % PRE-update X_0
+                        Uk = VAL.u{b};                                    % (n_k × m)
+                        Yb = VAL.y{b};                                    % (n_k × ny)
+                
+                        for k = 1:nkv
+                            Xk   = reduce(Xk, 'girard', Kred);
+                            uk   = Uk(k,:).';
+                            U_pt = zonotope(uk);
+                
+                            % PRE-update output at time k INCLUDING feedthrough
+                            Yset = sys_true_dt.C * Xk + sys_true_dt.D * uk;
+                
+                            % widths (SUM across outputs; canonicalize later)
+                            Iv   = interval(Yset);
+                            lo   = try_get(@() infimum(Iv), @() Iv.inf);
+                            hi   = try_get(@() supremum(Iv), @() Iv.sup);
+                            wvec = max(hi - lo, 0);
+                            wid_sums(k)   = wid_sums(k)   + sum(double(wvec), 'omitnan');
+                            wid_counts(k) = wid_counts(k) + 1;
+                
+                            % containment in interval hull of Yset
+                            y_meas = Yb(k,:).';
+                            if contains_interval(y_meas, Yset, tol), num_in = num_in + 1; end
+                            num_all = num_all + 1;
+                
+                            % POST-update propagation
+                            Xk = M_AB * cartProd(Xk, U_pt) + W_used;
+                        end
+                    end
+                
                     Tinfer = toc(t2);
                 
-                    % Map sets to output space correctly
-                    Ysets_ddra = cellfun(@(X) linearMap(X, sys_true_dt.C), Xsets_ddra, 'uni', 0);
+                    % average across blocks; canonical report = MEAN across outputs
+                    wid_ddra_k_raw = wid_sums ./ max(1, wid_counts);
+                    [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k_raw, size(sys_true_dt.C,1), "mean");
+                    sizeI_ddra_k = wid_ddra_k;
                 
-                    % Per-step interval widths (mean over outputs), then canonicalize to "mean"
-                    wid_ddra_k_raw = zeros(numel(Ysets_ddra),1);
-                    for k = 1:numel(Ysets_ddra)
-                        Ik = interval(Ysets_ddra{k});
-                        try, lo = infimum(Ik); hi = supremum(Ik);
-                        catch, lo = Ik.inf;    hi = Ik.sup;
-                        end
-                        wvec = max(hi - lo, 0);
-                        wid_ddra_k_raw(k) = mean(double(wvec), 'omitnan');
-                    end
-                    [ sizeI_ddra, wid_ddra_k ] = normalize_widths( ...
-                        wid_ddra_k_raw, size(sys_true_dt.C,1), "mean");
-                    sizeI_ddra_k = wid_ddra_k;   % keep per-step array for artifacts/CSV
-                
-                    % Containment must be in output-space too
-                    cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, cfg.metrics.tol);
-                
-                    clear Xsets_ddra
+                    cval_ddra = (num_all>0) * (100 * num_in / max(1,num_all));
                 else
                     t2 = tic;
                     [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming( ...
                         sys_ddra, R0, [], W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    [ sizeI_ddra, wid_ddra_k ] = normalize_widths( ...
+                    [sizeI_ddra, wid_ddra_k] = normalize_widths( ...
                         wid_ddra_k, size(sys_true_dt.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
                     sizeI_ddra_k = wid_ddra_k;
                 end
@@ -442,7 +453,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred, 'width_agg', 'sum');
                 Tinfer_g   = toc(t4);
-                [ sizeI_gray, wid_gray_k ] = normalize_widths(wid_gray_k, size(configs{idxGray}.sys.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
+                [sizeI_gray, wid_gray_k] = normalize_widths( ...
+                    wid_gray_k, size(configs{idxGray}.sys.C,1), "mean");
 
                 cov_ddra_k = []; cov_gray_k = []; fv_ddra = []; fv_gray = [];
 
@@ -683,7 +695,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
 
     function write_row(row, csv_path, LM)
-        % Writes one row to CSV or in-memory cells (same logic you already use)
+        % Writes one row to CSV or in-memory cells
         % Relies on outer-scope: hdr, cells, rowi
         write_row_init_if_needed(row, csv_path, LM);
         if LM.append_csv
@@ -698,7 +710,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     
     function emit_skip_row(reason, varargin)
         % Common skip pathway to avoid copy-paste
-        % varargin lets you pass name/value that end up on row fields
+        % varargin lets allows passing name/value that end up on row fields
         % Relies on outer-scope vars already in run_sweeps: C, D, alpha_w, pe,
         % Zinfo, Tlearn, Tcheck, use_noise, csv_path, LM, rowi
         if exist('Tlearn','var'),        Tlearn_val = Tlearn;        else, Tlearn_val = NaN; end
@@ -713,8 +725,8 @@ function SUMMARY = run_sweeps(cfg, grid)
             NaN, NaN, NaN, NaN, NaN, ...
             Zinfo.rankZ, Zinfo.condZ, ...
             Tlearn_val, Tcheck_val, Tinfer_val, Tlearn_g_val, Tvalidate_g_val, Tinfer_g_val);
-        row.skipped     = true;
-        row.skip_reason = string(reason);
+        if ~isfield(row,'skipped'),     row.skipped = false; end
+        if ~isfield(row,'skip_reason'), row.skip_reason = ""; end
         row.use_noise   = use_noise;
 
         % Ensure schema stability for columns that appear in non-skip rows
@@ -744,7 +756,6 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
     
     function idxGray = pick_gray_config(configs, C)
-        % Same logic you use in multiple places, consolidated
         want = "graySeq";
         try
             if isfield(C,'gray') && isfield(C.gray,'methodsGray') && ~isempty(C.gray.methodsGray)
@@ -806,7 +817,7 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
     
     function logf(varargin)
-        % toggle with cfg.io.verbose=true/false if you want
+        % toggle with cfg.io.verbose=true/false
         try, vb = logical(getfielddef(cfg,'io',struct()).verbose);
         catch, vb = true;
         end
@@ -911,7 +922,7 @@ function feed(md, v)
             end
         end
     elseif isa(v,'zonotope')
-        % If you ever hash sets: reduce to center/generators
+        % If hashing sets, reduce to center/generators
         try
             feed(md, center(v)); feed(md, generators(v));
         catch
@@ -929,3 +940,8 @@ end
 
 function updateStr(md, s), md.update(uint8(s)); end
 function updateIntVec(md, v), md.update(typecast(v(:),'uint8')); end
+function v = try_get(f, g)
+    try, v = f();
+    catch, v = g();
+    end
+end
