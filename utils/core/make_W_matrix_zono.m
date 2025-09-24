@@ -1,58 +1,24 @@
 function MZ = make_W_matrix_zono(W, T)
-% Build a matrix zonotope representing stacked disturbances across T samples.
-% New CORA API: matZonotope(C, G3) with G3 of size (n x T x h).
-% Falls back to old {cell of generators} signature if needed.
-
-    % center: n x T zeros (disturbance mean is 0)
     n = size(center(W), 1);
-    C = zeros(n, T);
+    C = repmat(center(W), 1, T);          % <-- tile actual center
 
-    % fetch generator matrix of W robustly
+    % robustly fetch W generators as an (n x h) matrix
     Gmat = [];
-    try
-        Gmat = generators(W);                 
-    catch
-        % fallbacks for older CORA objects
-        if isprop(W, 'G') && ~isempty(W.G)
-            Gmat = W.G;                        % n x h
-        elseif isprop(W, 'Z') && ~isempty(W.Z)
-            Z = W.Z;                           % [c | G1 ... Gh]
-            if size(Z,2) >= 2
-                Gmat = Z(:, 2:end);
-            else
-                Gmat = [];
-            end
-        else
-            Gmat = [];
+    try, Gmat = generators(W); catch, end
+    if isempty(Gmat)
+        if isprop(W, 'G') && ~isempty(W.G), Gmat = W.G;
+        elseif isprop(W, 'Z') && ~isempty(W.Z), Gmat = W.Z(:,2:end);
+        else, Gmat = zeros(n,0);
         end
     end
+    h = size(Gmat,2);
 
-    h = size(Gmat, 2);                         % number of W generators
-
-    % new-API path: pack as 3D array (n x T x h)
-    G3 = zeros(n, T, h);
-    for j = 1:h
-        gj = Gmat(:, j);                      
-        G3(:, :, j) = repmat(gj, 1, T);
+    % time-sliced 3D generators (independent disturbances per step)
+    G3 = zeros(n, T, h*T);
+    for t = 1:T
+        cols = (t-1)*h + (1:h);
+        G3(:, t, cols) = Gmat;
     end
 
-    % try new CORA constructor
-    try
-        MZ = matZonotope(C, G3);
-        return
-    catch
-        % fallback for older CORA: cell of (n x T) generator matrices
-        GW = cell(1, h*T);
-        idx = 1;
-        for j = 1:h
-            gj = Gmat(:, j);
-            for t = 1:T
-                Gt = zeros(n, T);
-                Gt(:, t) = gj;
-                GW{idx} = Gt;
-                idx = idx + 1;
-            end
-        end
-        MZ = matZonotope(C, GW);
-    end
+    MZ = matZonotope(C, G3);
 end

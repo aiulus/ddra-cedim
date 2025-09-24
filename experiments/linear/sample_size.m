@@ -73,7 +73,7 @@ cfg.ddra = struct();
 cfg.ddra.eta_w   = 1;      % number of W generators
 cfg.ddra.alpha_w = 0.50;   % W scale
 % --- DDRA ridge guard (defaults) ---
-cfg.ddra.allow_ridge   = false;   % if false and rank-deficient -> skip point
+cfg.ddra.allow_ridge   = true;   % if false and rank-deficient -> skip point
 cfg.ddra.lambda        = 1e-8;    % ridge lambda when allowed
 cfg.ddra.ridge_gamma   = 1.0;     % scale for added uncertainty
 cfg.ddra.ridge_policy  = "MAB";   % "MAB" (add generator to M_AB) or "W" (inflate W)
@@ -97,16 +97,16 @@ sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 %sweep_grid.n_m_list = [2 4 8 16 32 64 128];
 sweep_grid.n_m_list = 2:2:20;
-sweep_grid.n_m_list = 2:2:4;
+sweep_grid.n_m_list = 2:2:6;
 sweep_grid.n_s_list = 4;
 %sweep_grid.n_k_list = 2:2:20;
-sweep_grid.n_k_list = 10;
+sweep_grid.n_k_list = 20;
 sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles
 cfg.lowmem = struct();
 cfg.lowmem.gray_check_contain = true;   % don’t do expensive Gray containment
-cfg.lowmem.store_ddra_sets    = true;   % don’t keep DDRA sets; compute metrics on the fly
+cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metrics on the fly
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
 cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
 

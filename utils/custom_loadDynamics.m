@@ -184,7 +184,7 @@ switch dynamics
         p_true.ctrl = struct('K', K, 'S', S);
         p_true.m_act = size(S,2);
 
-    case {"kDuffingMSD", "k- Duffing-MSD"}
+    case {"kDuffingMSD", "k-Duffing-MSD"}
         % MSD chain with onsite cubic springs: locally Lipschitz polynomial.
         % States z=[q;v] in R^{2D}, q = x - xbar. Inputs u: one force per mass.
         %

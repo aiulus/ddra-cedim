@@ -18,7 +18,7 @@ function Mw = rcsi2ddra_buildMw(A, B, X0, Usets)
     W = cell(1,T);
     W{1} = A*X0 + B*Usets{1};     % W0
     for k = 2:T
-        W{k} = { B*Usets{k} };    % Wk
+        W{k} = B*Usets{k};    % Wk
     end
 
     % Assemble matZonotope Mw whose column k equals zonotope W{k}

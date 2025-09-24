@@ -174,6 +174,19 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
                 Tcheck = toc(t1);
 
+                %% Debug sequence
+                boxM = intervalMatrix(M_AB).int;
+                ab_span = boxM.sup - boxM.inf;
+                row.ab_hw_mean = mean(ab_span(:))/2;     % mean half-width of all AB entries
+                row.ab_hw_max  = max(ab_span(:))/2;      % max half-width
+                fprintf("ab_hw_mean: %.8f, ab_hw_max: %.8f\n", row.ab_hw_mean, row.ab_hw_max)
+                try
+                    row.ab_ngen = size(M_AB.G,3);        % #gens in matZonotope (if available)
+                catch
+                    row.ab_ngen = NaN;
+                end
+
+
                 % Fairness: if ridge would inflate MAB and we're not mirroring it into Gray, skip row for both
                 if isfield(ridgeInfo,'used') && ridgeInfo.used && ...
                    isfield(ridgeInfo,'policy') && string(ridgeInfo.policy)=="inflate_MAB"
@@ -386,34 +399,48 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
+                % ---- DDRA inference (stored or streaming) on SAME validation points
                 if LM.store_ddra_sets
                     t2 = tic;
-                    % add VAL as an optional arg; legacy code can ignore it
                     [Xsets_ddra, ~] = ddra_infer(sys_ddra, R0, U, W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
-
-                    % Ysets_ddra = Xsets_ddra;
-                    Ysets_ddra = cellfun(@(X) sys_true_dt.C * X, Xsets_ddra, 'uni',0);
-                    
-                    vol_ddra  = cellfun(@(Z) norm(Z), Ysets_ddra);
-                    sizeI_ddra = mean(vol_ddra(:));   % mean output-set volume across VAL
-
-                    % Containment should also be done in output-space:
+                
+                    % Map sets to output space correctly
+                    Ysets_ddra = cellfun(@(X) linearMap(X, sys_true_dt.C), Xsets_ddra, 'uni', 0);
+                
+                    % Per-step interval widths (mean over outputs), then canonicalize to "mean"
+                    wid_ddra_k_raw = zeros(numel(Ysets_ddra),1);
+                    for k = 1:numel(Ysets_ddra)
+                        Ik = interval(Ysets_ddra{k});
+                        try, lo = infimum(Ik); hi = supremum(Ik);
+                        catch, lo = Ik.inf;    hi = Ik.sup;
+                        end
+                        wvec = max(hi - lo, 0);
+                        wid_ddra_k_raw(k) = mean(double(wvec), 'omitnan');
+                    end
+                    [ sizeI_ddra, wid_ddra_k ] = normalize_widths( ...
+                        wid_ddra_k_raw, size(sys_true_dt.C,1), "mean");
+                    sizeI_ddra_k = wid_ddra_k;   % keep per-step array for artifacts/CSV
+                
+                    % Containment must be in output-space too
                     cval_ddra = containsY_on_VAL(Ysets_ddra, VAL, cfg.metrics.tol);
-
+                
                     clear Xsets_ddra
-                else             
+                else
                     t2 = tic;
-                    [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming(sys_ddra, R0, [], W_used, M_AB, C, VAL);
+                    [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming( ...
+                        sys_ddra, R0, [], W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    [ sizeI_ddra, wid_ddra_k ] = normalize_widths(wid_ddra_k, size(sys_true_dt.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
-                    sizeI_ddra_k = wid_ddra_k;     % keep per-step array for artifacts/CSV
+                    [ sizeI_ddra, wid_ddra_k ] = normalize_widths( ...
+                        wid_ddra_k, size(sys_true_dt.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
+                    sizeI_ddra_k = wid_ddra_k;
                 end
+
 
                 % ---- Gray size metric (interval proxy), consistent with DDRA
                 t4 = tic;
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
-                    configs{idxGray}.params, 'overrideW', W_pred);
+                    configs{idxGray}.params, 'overrideW', W_pred, 'width_agg', 'sum');
                 Tinfer_g   = toc(t4);
                 [ sizeI_gray, wid_gray_k ] = normalize_widths(wid_gray_k, size(configs{idxGray}.sys.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
 
@@ -674,12 +701,18 @@ function SUMMARY = run_sweeps(cfg, grid)
         % varargin lets you pass name/value that end up on row fields
         % Relies on outer-scope vars already in run_sweeps: C, D, alpha_w, pe,
         % Zinfo, Tlearn, Tcheck, use_noise, csv_path, LM, rowi
+        if exist('Tlearn','var'),        Tlearn_val = Tlearn;        else, Tlearn_val = NaN; end
+        if exist('Tcheck','var'),        Tcheck_val = Tcheck;        else, Tcheck_val = NaN; end
+        if exist('Tinfer','var'),        Tinfer_val = Tinfer;        else, Tinfer_val = NaN; end
+        if exist('Tlearn_g','var'),      Tlearn_g_val = Tlearn_g;    else, Tlearn_g_val = NaN; end
+        if exist('Tvalidate_g','var'),   Tvalidate_g_val = Tvalidate_g; else, Tvalidate_g_val = NaN; end
+        if exist('Tinfer_g','var'),      Tinfer_g_val = Tinfer_g;    else, Tinfer_g_val = NaN; end
+    
         rowi = rowi + 1;
         row = pack_row(C, D, alpha_w, pe, ...
             NaN, NaN, NaN, NaN, NaN, ...
             Zinfo.rankZ, Zinfo.condZ, ...
-            Tlearn, exist('Tcheck','var')*Tcheck + ~exist('Tcheck','var')*NaN, ...
-            NaN, NaN, NaN, NaN);
+            Tlearn_val, Tcheck_val, Tinfer_val, Tlearn_g_val, Tvalidate_g_val, Tinfer_g_val);
         row.skipped     = true;
         row.skip_reason = string(reason);
         row.use_noise   = use_noise;
