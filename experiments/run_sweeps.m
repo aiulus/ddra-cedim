@@ -5,14 +5,22 @@ function SUMMARY = run_sweeps(cfg, grid)
         try
             ps = parallel.Settings; ps.Pool.AutoCreate = false;
             p = gcp('nocreate'); if ~isempty(p), delete(p); end
-        catch, end
+        catch 
+        end
     end
 
-    [plots_dir, results_dir] = init_io(cfg); 
-    csv_path = fullfile(results_dir, 'summary.csv');
-    csv_perstep = fullfile(results_dir, 'summary_perstep.csv');
-    if exist(csv_perstep,'file'), delete(csv_perstep); end
+    [plots_dir, results_dir] = init_io(cfg);
 
+    % -------- Sweep axes & base config -----------------------------------
+    [axes, baseC] = init_sweep_axes(cfg, grid);
+    
+    % Precompute for in-memory mode only (IO helper will use this)
+    Ntot = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * ...
+           numel(axes.n_s) * numel(axes.n_k) * numel(axes.pe);
+    
+    % Centralized I/O state (handles CSV init, per-step header, etc.)
+    IO = sweepio_begin(cfg, plots_dir, results_dir, Ntot);
+    
 
     % -------- Low-memory / IO toggles (with safe defaults) ---------------
     LM = getfielddef(cfg, 'lowmem', struct());
@@ -21,10 +29,6 @@ function SUMMARY = run_sweeps(cfg, grid)
     LM.append_csv         = getfielddef(LM, 'append_csv', false);
     %LM.store_ddra_sets = false; 
 
-    % If streaming to CSV, start clean
-    if LM.append_csv && exist(csv_path, 'file')
-        delete(csv_path);
-    end
 
     % -------- Sweep axes & base config -----------------------------------
     [axes, baseC] = init_sweep_axes(cfg, grid);
@@ -42,17 +46,7 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     function out = ternary(cond, a, b), if cond, out=a; else, out=b; end, end
 
-
-    % Precompute for in-memory mode only
-    if ~LM.append_csv
-        Ntot = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * ...
-               numel(axes.n_s) * numel(axes.n_k) * numel(axes.pe);
-        cells = [];  % allocate after first row when the header is known
-    end
-    hdr  = {};
-    rowi = 0;
-    % Force explicit PE whenever there are multiple PE orders
-    % on the grid
+    % Force explicit PE whenever there are multiple PE orders on the grid
     is_multi_pe = numel(axes.pe) > 1;
     if is_multi_pe, baseC.shared.pe_policy = "explicit"; end
     % ------------------------ Main sweeps --------------------------------
@@ -63,7 +57,7 @@ function SUMMARY = run_sweeps(cfg, grid)
             for n_k = axes.n_k
               for ip = 1:numel(axes.pe)
                 pe = axes.pe{ip};
-                row_index = rowi + 1;
+                rowi = IO.rowi + 1;
                 
                 C = baseC;   % <-- make C first, then compute seed from C & pe
                 tag = getfielddef(getfielddef(cfg,'io',struct()),'save_tag','');
@@ -117,15 +111,12 @@ function SUMMARY = run_sweeps(cfg, grid)
                     pe.order = max(1, min(sys_cora.nrOfDims+1, C.shared.n_k-1));
                 end
 
-                %% New
-                % pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k);
                 respect = (string(C.shared.pe_policy) == "explicit");
                 pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k, ...
                                       'respect_explicit_order', respect);
 
                 % ================= DDRA =================
                 t0 = tic;
-                % DATASET.x0_blocks{b}, DATASET.u_blocks{b} with block length n_k
                 [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_ddra, sys_cora.dt, R0, U, pe_eff, sys_cora);
                 Tlearn = toc(t0);
     
@@ -136,8 +127,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     % Gate on the requested order when sweeping PE explicitly
                     Lgate = getfielddef(pe,'order_gate', getfielddef(pe,'order', pe_eff.order));
                 else
-                    % Gate on the effective minimal sufficient order
-                    Lgate = pe_eff.order;
+                    Lgate = pe_eff.order; % Gate on the effective minimal sufficient order
                 end
 
                 % DEBUG STATEMENT
@@ -148,10 +138,13 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 
                 if ~okPE
-                    % mark and skip this row to keep the grid aligned
-                    rowi = emit_skip_row(rowi, "PE_not_satisfied");
+                    timers = struct('Tlearn', exist('Tlearn','var')*Tlearn + ~exist('Tlearn','var')*NaN, ...
+                                    'Tcheck', NaN, 'Tinfer', NaN, 'Tlearn_g', NaN, ...
+                                    'Tvalidate_g', NaN, 'Tinfer_g', NaN);
+                    row = build_skip_row(C, D, alpha_w, pe, Zinfo, timers, use_noise, "PE_not_satisfied", {});
+                    IO  = sweepio_write_row(IO, row);
                     clear TS_train DATASET
-                    continue; % skip to next sweep point
+                    continue; % keep grid aligned
                 end
     
                 C_val = C;
@@ -164,7 +157,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                 fprintf('VAL suite: %d cases, n_k=%d (expects %d=m*s)\n', ...
                     numel(TS_val), size(TS_val{1}.y,1), C_val.shared.n_m*C_val.shared.n_s);
 
-    
                 % Learn M_AB
                 t1 = tic;
                 try
@@ -179,35 +171,30 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
                 Tcheck = toc(t1);
 
-                %% Debug sequence
-                boxM = intervalMatrix(M_AB).int;
-                ab_span = boxM.sup - boxM.inf;
-                row.ab_hw_mean = mean(ab_span(:))/2;     % mean half-width of all AB entries
-                row.ab_hw_max  = max(ab_span(:))/2;      % max half-width
-                fprintf("ab_hw_mean: %.8f, ab_hw_max: %.8f\n", row.ab_hw_mean, row.ab_hw_max)
                 try
-                    row.ab_ngen = size(M_AB.G,3);        % #gens in matZonotope (if available)
+                    row.ab_ngen = size(M_AB.G,3); % #gens in matZonotope (if available)
                 catch
                     row.ab_ngen = NaN;
                 end
                 
                 % If rank-deficient and allow_ridge = false, skip this sweep point
                 if isfield(ridgeInfo,'skipped') && ridgeInfo.skipped
-                    rowi = emit_skip_row(rowi,"skip", ...
-                        'ddra_ridge',false, ...
-                        'ddra_lambda',0, ...
-                        'ddra_kappa',NaN, ...
-                        'ddra_ridge_policy',"skip");
+                    timers = struct('Tlearn', exist('Tlearn','var')*Tlearn + ~exist('Tlearn','var')*NaN, ...
+                                    'Tcheck', exist('Tcheck','var')*Tcheck + ~exist('Tcheck','var')*NaN, ...
+                                    'Tinfer', NaN, 'Tlearn_g', NaN, 'Tvalidate_g', NaN, 'Tinfer_g', NaN);
+                    extras = {'ddra_ridge',false, 'ddra_lambda',0, 'ddra_kappa',NaN, 'ddra_ridge_policy',"skip"};
+                    row = build_skip_row(C, D, alpha_w, pe, Zinfo, timers, use_noise, "skip", extras);
+                    IO  = sweepio_write_row(IO, row);
                     clear Xminus Xplus TS_train TS_val DATASET DATASET_val
                     continue;
                 end
+
                 
                 clear Xminus Xplus  % free data blocks early
 
     
                 % ---- unified disturbance policy ----
                 % W_eff: from ddra_learn_Mab (may include ridge inflation)
-                % ---- unified disturbance policy (unchanged) ----
                 if resolve_use_noise(C.shared)
                     W_used = W_eff;    % state-dim nx
                 else
@@ -240,34 +227,9 @@ function SUMMARY = run_sweeps(cfg, grid)
                     configs{idxGray}.params.W = W_pred;
                 end
 
-                % ---- Debug prints ----
-                valE = 0;
-                if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
-                    try
-                        Wc = coerceWToSys(sys_cora, W_used);
-                        if isa(Wc,'zonotope')
-                            valE = sum(abs(sys_cora.E * generators(Wc)), 'all');
-                        end
-                    catch
-                        % leave valE = 0
-                    end
-                end
-                try
-                    valW = sum(abs(generators(W_used)),'all');
-                catch
-                    valW = 0;
-                end
-                %fprintf('Reporting from run_sweeps: ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', valW, valE);
-
-
-                % Build VAL record (x0,u) from TS_val and pass to both sides
-                % VAL = VAL_from_TS(TS_val, DATASET_val);
                 VAL = pack_VAL_from_TS(TS_val);
 
-                %fprintf('VAL(flat) m*s=%d  nk=%d  hash=%s\n', ...
-                %     numel(VAL.y), size(VAL.y{1},1), val_hash(VAL));
-                fprintf('VAL(flat) m*s=%d  nk=%d\n', ...
-                     numel(VAL.y), size(VAL.y{1},1));
+                fprintf('VAL(flat) m*s=%d  nk=%d\n', numel(VAL.y), size(VAL.y{1},1));
 
                 %% PATCH
                 % --- hard invariants for evaluation parity ---
@@ -288,47 +250,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                     must( size(center(Wpred),1)==configs{idxGray}.sys.nrOfDisturbances, 'W_pred dim mismatch');
                 end
 
-    
-                % DEBUG SEQUENCE - START
-                % Quick internal parity check (non-fatal; hits breakpoint if mismatch)
-                % --- Debug: VAL parity check (non-fatal)
-                try
-                    Vcanon = pack_VAL_from_TS(TS_val);
-                    okVAL  = strcmp(val_hash(VAL), val_hash(Vcanon));
-                    if ~okVAL
-                        warning('VAL != canonical(TS_val) — check pack_VAL_from_TS / TS construction.');
-                    end
-                catch ME
-                    % If val_hash is missing, just warn (don't stop experiments)
-                    warning(ME.identifier, '%s',  ME.message);
-                end
-
-                % DEBUG SEQUENCE - END
-
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
                 % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
                 row_index = rowi + 1;
-                artdir = fullfile(results_dir, 'artifacts');
-                if ~exist(artdir,'dir'), mkdir(artdir); end
-                
-                sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
-                artifact = struct();
-                artifact.sys_gray = configs{idxGray}.sys;
-                artifact.sys_ddra = sys_true_dt;
-                artifact.VAL      = VAL;                % exact VAL used
-                artifact.W_eff    = W_used;
-                artifact.M_AB     = M_AB;
-                artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
-                    'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, ...
-                    'n_s', C.shared.n_s, 'n_k', C.shared.n_k, 'pe', pe, ...
-                    'save_tag', cfg.io.save_tag, 'schema', 2);
-                
-                artifact.VAL.R0 = R0;    
-                artifact.VAL.U  = U;
-                
-                save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
-
-
+                sweepio_save_artifact(IO, row_index, artifact);
 
                 want_online = any(pmode == ["online","both"]) && getfielddef(cfg.io,'make_reach_plot',true);
                 if want_online && ismember(row_index, getfielddef(cfg.io,'plot_rows',[1]))
@@ -607,7 +532,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                         % ---------- NEW: symmetric Hausdorff & mean-width (per-step) ----------
                         Nd   = getfielddef(dir_cfg,'Nd',64);
                         ny   = size(sys_true_dt.C,1);
-                        Ddirs = sample_unit_dirs(ny, Nd, getfielddef(dir_cfg,'seed',12345)); % you already have this
+                        Ddirs = sample_unit_dirs(ny, Nd, getfielddef(dir_cfg,'seed',12345));
                         
                         hd_sym_k   = zeros(nkv,1);
                         mw_gray_k  = zeros(nkv,1);
@@ -625,7 +550,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                             Xk_rep = reduce(Xk_rep, 'girard', Kred);
                             uk     = VAL.u{b0}(ps,:).';
                             Yd_k   = sys_true_dt.C*Xk_rep + sys_true_dt.D*uk;   % PRE-update output set
-                            mw_ddra_k(ps) = mean_width_dir(toZono(Yd_k), Ddirs); % your helper
+                            mw_ddra_k(ps) = mean_width_dir(toZono(Yd_k), Ddirs); 
                         
                             % propagate PRE→POST
                             Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
@@ -662,7 +587,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                         end
                     end
                    
-                    save(fullfile(artdir, sprintf('row_%04d.mat', row_index)), '-struct','artifact','-v7.3');
+                    sweepio_save_artifact(IO, row_index, artifact);
 
                     clear configs  
 
@@ -681,8 +606,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                     ratio_k = artifact.metrics.ratio_gray_vs_true_k;
                 end
                 
-                stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ...
-                               ratio_k, cov_ddra_k, cov_gray_k);
+                sweepio_stream_perstep(IO, row_index, wid_ddra_k, wid_gray_k, ...
+                       ratio_k, cov_ddra_k, cov_gray_k);
 
                 
                 %% end patch
@@ -693,7 +618,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 row.ddra_ridge_policy= char(ridgeInfo.policy);
 
                 % --- Initialize schema & write/accumulate ----
-                sweep_write_row(row, csv_path, LM);
+                IO = sweepio_write_row(IO, row);
                 fprintf('[%s] row %d/%d (%.1f%%) | elapsed %s | ERA %s | avg/row %.2fs | tag=%s\n', ...
                         datestr(now,'HH:MM:SS'), rowi, NALL, 100*rowi/NALL, ...
                         char(duration(0,0,toc(t0_all),'Format','hh:mm:ss')), ...
@@ -710,43 +635,8 @@ function SUMMARY = run_sweeps(cfg, grid)
     end
 
     % ------------------------- Save & return ------------------------------
-    if LM.append_csv
-        fprintf('Sweeps done. Rows: %d\nCSV -> %s\n', rowi, csv_path);
-        SUMMARY = readtable(csv_path);
-    else
-        writecell([hdr; cells(1:rowi,:)], csv_path);
-        fprintf('Sweeps done. Rows: %d\nCSV -> %s\n', rowi, csv_path);
-        SUMMARY = cell2table(cells(1:rowi,:), 'VariableNames', hdr);
-    end
-
-    function write_row_init_if_needed(row, csv_path, LM)
-        % Initializes header and in-memory cells (if needed) using caller scope.
-        % Relies on outer-scope variables: hdr, cells, Ntot, rowi
-        persistent initialized
-        if isempty(initialized) || rowi == 1
-            hdr = fieldnames(orderfields(row))';
-            if LM.append_csv
-                fid = fopen(csv_path, 'w'); fprintf(fid, '%s\n', strjoin(hdr, ',')); fclose(fid);
-            else
-                cells = cell(Ntot, numel(hdr));
-            end
-            initialized = true;
-        end
-    end
-
-    function sweep_write_row(row, csv_path, LM)
-        % Writes one row to CSV or in-memory cells
-        % Relies on outer-scope: hdr, cells, rowi
-        write_row_init_if_needed(row, csv_path, LM);
-        if LM.append_csv
-            append_row_csv(csv_path, hdr, row);
-        else
-            for j = 1:numel(hdr)
-                v = row.(hdr{j}); if isstring(v), v = char(v); end
-                cells{rowi, j} = v;
-            end
-        end
-    end         
+    SUMMARY = sweepio_finalize(IO);
+   
 end
 
 
