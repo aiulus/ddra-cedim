@@ -20,6 +20,8 @@ function SUMMARY = run_sweeps(cfg, grid)
     
     % Centralized I/O state (handles CSV init, per-step header, etc.)
     IO = sweepio_begin(cfg, plots_dir, results_dir, Ntot);
+    t0_all = tic;
+    NALL = Ntot;
     
 
     % -------- Low-memory / IO toggles (with safe defaults) ---------------
@@ -31,9 +33,6 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 
     % -------- Sweep axes & base config -----------------------------------
-    [axes, baseC] = init_sweep_axes(cfg, grid);
-    t0_all = tic;
-    NALL = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * numel(axes.n_s) * numel(axes.n_k) * numel(axes.pe);
 
     if ~isfield(cfg,'metrics') || ~isfield(cfg.metrics,'tol'), cfg.metrics.tol = 1e-6; end
     % ---- PE policy: explicit for "pe_sweep", minimal otherwise unless forced ----
@@ -57,7 +56,7 @@ function SUMMARY = run_sweeps(cfg, grid)
             for n_k = axes.n_k
               for ip = 1:numel(axes.pe)
                 pe = axes.pe{ip};
-                rowi = IO.rowi + 1;
+                row_index = IO.rowi + 1;
                 
                 C = baseC;   % <-- make C first, then compute seed from C & pe
                 tag = getfielddef(getfielddef(cfg,'io',struct()),'save_tag','');
@@ -252,8 +251,23 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
                 % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
-                row_index = rowi + 1;
+                sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
+                
+                artifact = struct();
+                artifact.sys_gray = configs{idxGray}.sys;
+                artifact.sys_ddra = sys_true_dt;
+                artifact.VAL      = VAL;                % exact VAL used
+                artifact.W_eff    = W_used;             % actually used in inference
+                artifact.M_AB     = M_AB;
+                artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
+                    'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, ...
+                    'n_s', C.shared.n_s, 'n_k', C.shared.n_k, 'pe', pe, ...
+                    'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
+                artifact.VAL.R0   = R0;
+                artifact.VAL.U    = U;
+                
                 sweepio_save_artifact(IO, row_index, artifact);
+
 
                 want_online = any(pmode == ["online","both"]) && getfielddef(cfg.io,'make_reach_plot',true);
                 if want_online && ismember(row_index, getfielddef(cfg.io,'plot_rows',[1]))
@@ -407,8 +421,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 if (ctrain_gray <= 1), ctrain_gray = 100*ctrain_gray; end
                 if (cval_gray   <= 1), cval_gray   = 100*cval_gray;   end
                 if (cval_ddra   <= 1), cval_ddra   = 100*cval_ddra;   end
-
-                rowi = rowi + 1;      
+    
                 row = pack_row(C, D, alpha_w, pe, ...
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
@@ -428,11 +441,7 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 
                 % --- Optional: save plotting artifact for this row ---
-                if isfield(cfg,'io') && isfield(cfg.io,'save_artifacts') && cfg.io.save_artifacts
-                    % ensure folder
-                    artdir = fullfile(results_dir, 'artifacts');
-                    if ~exist(artdir,'dir'), mkdir(artdir); end
-                
+                if isfield(cfg,'io') && isfield(cfg.io,'save_artifacts') && cfg.io.save_artifacts                
                     % pack only what plotting needs
                     artifact = struct();
                     artifact.sys_gray = configs{idxGray}.sys;     % linearSysDT
@@ -542,6 +551,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                         b0 = 1;                               % representative VAL block
                         Xk_rep = reduce(VAL.R0 + VAL.x0{b0}, 'girard', Kred);
                         for ps = 1:nkv
+                            Yt_k = toZono(linearMap(Rt{ps}, sys_true_dt.C));
+                            Yg_k = toZono(linearMap(Rg{ps}, configs{idxGray}.sys.C));
                             % symmetric Hausdorff between True and Gray via support gaps on sampled dirs
                             hd_sym_k(ps)  = hausdorff_dir(Yt_k, Yg_k, Ddirs);
                             
@@ -620,11 +631,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % --- Initialize schema & write/accumulate ----
                 IO = sweepio_write_row(IO, row);
                 fprintf('[%s] row %d/%d (%.1f%%) | elapsed %s | ERA %s | avg/row %.2fs | tag=%s\n', ...
-                        datestr(now,'HH:MM:SS'), rowi, NALL, 100*rowi/NALL, ...
-                        char(duration(0,0,toc(t0_all),'Format','hh:mm:ss')), ...
-                        char(duration(0,0,(NALL-rowi)*(toc(t0_all)/max(rowi,1)),'Format','hh:mm:ss')), ...
-                        toc(t0_all)/max(rowi,1), char(getfielddef(cfg.io,'save_tag','')));
-
+                    datestr(now,'HH:MM:SS'), IO.rowi, NALL, 100*IO.rowi/NALL, ...
+                    char(duration(0,0,toc(t0_all),'Format','hh:mm:ss')), ...
+                    char(duration(0,0,(NALL-IO.rowi)*(toc(t0_all)/max(IO.rowi,1)),'Format','hh:mm:ss')), ...
+                    toc(t0_all)/max(IO.rowi,1), char(getfielddef(cfg.io,'save_tag','')) );
 
                 clear M_AB Zinfo sizeI_ddra sizeI_gray TS_train TS_val DATASET DATASET_val VAL
               end

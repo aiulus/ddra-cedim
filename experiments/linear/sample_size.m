@@ -96,9 +96,9 @@ sweep_grid = struct();
 sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = 2:2:20;
-sweep_grid.n_m_list = 10;
+sweep_grid.n_m_list = 2;
 sweep_grid.n_s_list = 4;
-sweep_grid.n_k_list = 4:1:20;
+sweep_grid.n_k_list = 4:1:10;
 %sweep_grid.n_k_list = 20;
 sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
 
@@ -172,6 +172,7 @@ hdr = sprintf('%s (D=%d, PE-order=%g)', sys_name, D, L);
 colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
 ddra_lbl = ['DDRA ' lg_info];
 rcsi_lbl_full = ['RCSI-' rcsi_lbl ' ' lg_info];
+
 
 %% ---------- Runtime panels (total / learn / validation / inference) ----------
 f = figure('Name','Runtime panels','Color','w');
