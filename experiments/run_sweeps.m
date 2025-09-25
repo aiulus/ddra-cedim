@@ -415,6 +415,98 @@ function SUMMARY = run_sweeps(cfg, grid)
                     end
                 end
 
+                % --- Shape-aware / directional metrics (optional; guarded, computed once) ---
+                DIR = [];   % local struct to carry metrics forward; if empty -> not computed
+                
+                dir_cfg = getfielddef(getfielddef(cfg,'metrics',struct()), 'directional', struct());
+                want_dir = getfielddef(dir_cfg,'enable', false);
+                
+                if want_dir
+                    % Build reach options (never pass 'cs' here)
+                    optReach = getfielddef(C.shared,'options_reach', struct('zonotopeOrder',60,'reductionTechnique','girard'));
+                    if isfield(optReach,'cs'), optReach = rmfield(optReach,'cs'); end
+                
+                    nkv = C.shared.n_k_val;
+                    ny  = size(sys_true_dt.C,1);
+                    Nd  = getfielddef(dir_cfg,'Nd',64);
+                    dseed = getfielddef(dir_cfg,'seed',12345);
+                    Ddirs = sample_unit_dirs(ny, Nd, dseed);
+                
+                    % Accumulators (scalar + per-step)
+                    dir_eps_all = []; dir_del_all = [];
+                    hd_sym_k = zeros(nkv,1); mw_gray_k = zeros(nkv,1); mw_ddra_k = zeros(nkv,1);
+                
+                    % One representative PRE→POST chain for DDRA mean width
+                    ordCap = getfielddef(getfielddef(C,'lowmem',struct()), 'zonotopeOrder_cap', 100);
+                    Kred   = max(1, min(100, round(ordCap)));
+                
+                    for b = 1:numel(VAL.x0)
+                        % Precompute VAL reaches once per block
+                        params_true = struct('R0', R0, 'U', U, 'u', VAL.u{b}', 'tFinal', sys_true_dt.dt*(nkv-1));
+                        params_gray = struct('R0', configs{idxGray}.params.R0 + VAL.x0{b}, ...
+                                             'u',  VAL.u{b}', 'tFinal', configs{idxGray}.sys.dt*(nkv-1));
+                        if isprop(configs{idxGray}.sys,'nrOfDisturbances') && configs{idxGray}.sys.nrOfDisturbances>0
+                            params_gray.W = W_pred; % already in disturbance space
+                        end
+                
+                        Rt = reach(sys_true_dt, params_true, optReach).timePoint.set;
+                        Rg = reach(configs{idxGray}.sys, params_gray, optReach).timePoint.set;
+                
+                        % Representative chain for DDRA widths
+                        Xk_rep = reduce(R0 + VAL.x0{b}, 'girard', Kred);
+                
+                        for k = 1:nkv
+                            % True/Gray output sets as zonotopes
+                            Yt_k = toZono(linearMap(Rt{k}, sys_true_dt.C));
+                            Yg_k = toZono(linearMap(Rg{k}, configs{idxGray}.sys.C));
+                
+                            % Directional supports (outer metrics)
+                            s_t = support_zono_vec(Ddirs, center(Yt_k), generators(Yt_k));
+                            s_g = support_zono_vec(Ddirs, center(Yg_k), generators(Yg_k));
+                
+                            eps_kd = s_g ./ max(s_t, eps);        % ratio
+                            del_kd = max(s_g - s_t, 0);           % outer gap
+                
+                            dir_eps_all = [dir_eps_all; eps_kd(:)];
+                            dir_del_all = [dir_del_all; del_kd(:)];
+                
+                            % Symmetric Hausdorff on sampled directions
+                            hd_sym_k(k) = max(abs(s_g - s_t));
+                
+                            % Gray mean width (via support sums)
+                            mw_gray_k(k) = mean( s_g + support_zono_vec(-Ddirs, center(Yg_k), generators(Yg_k)) );
+                
+                            % DDRA PRE-update output width along representative chain
+                            Xk_rep = reduce(Xk_rep, 'girard', Kred);
+                            uk     = VAL.u{b}(k,:).';
+                            Yd_k   = sys_true_dt.C*Xk_rep + sys_true_dt.D*uk;
+                            Yd_k   = toZono(Yd_k);
+                            mw_ddra_k(k) = mean( ...
+                                support_zono_vec(Ddirs,  center(Yd_k), generators(Yd_k)) + ...
+                                support_zono_vec(-Ddirs, center(Yd_k), generators(Yd_k)) );
+                
+                            % Advance PRE→POST for next step
+                            Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
+                        end
+                    end
+                
+                    % Scalar summaries
+                    DIR.eps_med      = median(dir_eps_all, 'omitnan');
+                    DIR.eps_p90      = prctile(dir_eps_all, 90);
+                    DIR.hout_med     = median(dir_del_all, 'omitnan');
+                    DIR.hout_p90     = prctile(dir_del_all, 90);
+                    DIR.haus_sym_med = median(hd_sym_k, 'omitnan');
+                    DIR.haus_sym_p90 = prctile(hd_sym_k, 90);
+                    DIR.mw_gray_mean = mean(mw_gray_k, 'omitnan');
+                    DIR.mw_ddra_mean = mean(mw_ddra_k, 'omitnan');
+                
+                    % Keep per-step arrays for artifact (if you save it later)
+                    DIR.hd_sym_k   = hd_sym_k;
+                    DIR.mw_gray_k  = mw_gray_k;
+                    DIR.mw_ddra_k  = mw_ddra_k;
+                end
+
+
                 
                 % --- Pack row ---
                 % ensure percentages
@@ -438,6 +530,25 @@ function SUMMARY = run_sweeps(cfg, grid)
                 row.dir_eps_p90 = NaN;
                 row.hout_med    = NaN;
                 row.hout_p90    = NaN;
+
+                % Overwrite directional metrics if computed earlier
+                if ~isempty(DIR)
+                    row.dir_eps_med  = DIR.eps_med;
+                    row.dir_eps_p90  = DIR.eps_p90;
+                    row.hout_med     = DIR.hout_med;
+                    row.hout_p90     = DIR.hout_p90;
+                    row.haus_sym_med = DIR.haus_sym_med;
+                    row.haus_sym_p90 = DIR.haus_sym_p90;
+                    row.mw_gray_mean = DIR.mw_gray_mean;
+                    row.mw_ddra_mean = DIR.mw_ddra_mean;
+                else
+                    % Make sure fields exist even if not enabled (schema stability)
+                    row.haus_sym_med = NaN;
+                    row.haus_sym_p90 = NaN;
+                    row.mw_gray_mean = NaN;
+                    row.mw_ddra_mean = NaN;
+                end
+
 
 
                 % --- Optional: save plotting artifact for this row ---
@@ -485,102 +596,29 @@ function SUMMARY = run_sweeps(cfg, grid)
                             end
                         end
 
-                        % --- Directional support / Hausdorff-outer (shape-aware) ---
-                        dir_cfg = getfielddef(cfg,'metrics',struct());
-                        dir_cfg = getfielddef(dir_cfg,'directional', struct('Nd',64,'seed',12345));
-                        Nd   = getfielddef(dir_cfg,'Nd',64);
-                        dseed= getfielddef(dir_cfg,'seed',12345);
-                        
-                        ny = size(sys_true_dt.C,1);
-                        Ddirs = sample_unit_dirs(ny, Nd, dseed); % (ny x Nd), unit directions
-                        
-                        dir_eps_all = [];   % accumulate eps over blocks x steps x dirs
-                        dir_del_all = [];   % accumulate delta over blocks x steps x dirs
-                        Hout_k = zeros(nkv,1); cnt_kH = zeros(nkv,1);
-                        
-                        for b = 1:numel(VAL.x0)
-                            Ublk = VAL.u{b};
-                            for ps = 1:nkv
-                                uk = get_uk(Ublk, ps, size(sys_true_dt.D,2)); % (m x 1)
-                        
-                                % True Y_k and Gray Y_k as zonotopes (outer-approx if needed)
-                                Yt_k = toZono(linearMap(Rt{ps}, sys_true_dt.C));
-                                Yg_k = toZono(linearMap(Rg{ps}, configs{idxGray}.sys.C));
+                        if ~isempty(DIR)
+                            artifact.metrics.dir_eps_med = DIR.eps_med;
+                            artifact.metrics.dir_eps_p90 = DIR.eps_p90;
+                            artifact.metrics.hout_med    = DIR.hout_med;
+                            artifact.metrics.hout_p90    = DIR.hout_p90;
+                    
+                            artifact.metrics.haus_sym_k  = DIR.hd_sym_k;
+                            artifact.metrics.mw_gray_k   = DIR.mw_gray_k;
+                            artifact.metrics.mw_ddra_k   = DIR.mw_ddra_k;
 
-                        
-                                % Support values along all directions (vectorized)
-                                st = support_zono_vec(Ddirs, center(Yt_k), generators(Yt_k)) + Ddirs'*(sys_true_dt.D*uk);
-                                sg = support_zono_vec(Ddirs, center(Yg_k), generators(Yg_k)) + Ddirs'*(configs{idxGray}.sys.D*uk);
-                        
-                                eps_kd = sg ./ max(st, eps);
-                                del_kd = max(sg - st, 0);
-                        
-                                dir_eps_all = [dir_eps_all; eps_kd(:)]; 
-                                dir_del_all = [dir_del_all; del_kd(:)]; 
-
-                                Hout_k(ps) = Hout_k(ps) + max(del_kd);
-                                cnt_kH(ps) = cnt_kH(ps) + 1;
-                            end
+                            artifact.metrics.ratio_gray_vs_true_k = ratio_k ./ max(1, cnt_k);
+                    
+                            % Also ensure row is overwritten here (if not already)
+                            row.dir_eps_med  = DIR.eps_med;
+                            row.dir_eps_p90  = DIR.eps_p90;
+                            row.hout_med     = DIR.hout_med;
+                            row.hout_p90     = DIR.hout_p90;
+                            row.haus_sym_med = DIR.haus_sym_med;
+                            row.haus_sym_p90 = DIR.haus_sym_p90;
+                            row.mw_gray_mean = DIR.mw_gray_mean;
+                            row.mw_ddra_mean = DIR.mw_ddra_mean;
                         end
-                        
-                        artifact.metrics.dir_eps_med = median(dir_eps_all, 'omitnan');
-                        artifact.metrics.dir_eps_p90 = prctile(dir_eps_all, 90);
-                        artifact.metrics.hout_med    = median(dir_del_all, 'omitnan');
-                        artifact.metrics.hout_p90    = prctile(dir_del_all, 90);
-                        artifact.metrics.hout_k      = Hout_k ./ max(1,cnt_kH);
-
-                        % Overwrite row-level directional summaries now that we have them
-                        row.dir_eps_med = artifact.metrics.dir_eps_med;
-                        row.dir_eps_p90 = artifact.metrics.dir_eps_p90;
-                        row.hout_med    = artifact.metrics.hout_med;
-                        row.hout_p90    = artifact.metrics.hout_p90;
-
-
-                        artifact.metrics.ratio_gray_vs_true_k = ratio_k ./ max(1, cnt_k);
-
-                        % ---------- NEW: symmetric Hausdorff & mean-width (per-step) ----------
-                        Nd   = getfielddef(dir_cfg,'Nd',64);
-                        ny   = size(sys_true_dt.C,1);
-                        Ddirs = sample_unit_dirs(ny, Nd, getfielddef(dir_cfg,'seed',12345));
-                        
-                        hd_sym_k   = zeros(nkv,1);
-                        mw_gray_k  = zeros(nkv,1);
-                        mw_ddra_k  = zeros(nkv,1);
-                        iou_k      = nan(nkv,1);
-                        
-                        b0 = 1;                               % representative VAL block
-                        Xk_rep = reduce(VAL.R0 + VAL.x0{b0}, 'girard', Kred);
-                        for ps = 1:nkv
-                            Yt_k = toZono(linearMap(Rt{ps}, sys_true_dt.C));
-                            Yg_k = toZono(linearMap(Rg{ps}, configs{idxGray}.sys.C));
-                            % symmetric Hausdorff between True and Gray via support gaps on sampled dirs
-                            hd_sym_k(ps)  = hausdorff_dir(Yt_k, Yg_k, Ddirs);
-                            
-                            % mean width for Gray (direction-averaged support sum)
-                            mw_gray_k(ps) = mean_width_dir(Yg_k, Ddirs);
-                            Xk_rep = reduce(Xk_rep, 'girard', Kred);
-                            uk     = VAL.u{b0}(ps,:).';
-                            Yd_k   = sys_true_dt.C*Xk_rep + sys_true_dt.D*uk;   % PRE-update output set
-                            mw_ddra_k(ps) = mean_width_dir(toZono(Yd_k), Ddirs); 
-                        
-                            % propagate PRE→POST
-                            Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
-                        end
-                        
-                        artifact.metrics.haus_sym_k   = hd_sym_k;
-                        artifact.metrics.mw_gray_k    = mw_gray_k;
-                        artifact.metrics.mw_ddra_k    = mw_ddra_k;
-                        artifact.metrics.iou_k        = iou_k;
-                        
-                        % Scalar summaries for CSV
-                        row.haus_sym_med  = median(hd_sym_k, 'omitnan');
-                        row.haus_sym_p90  = prctile(hd_sym_k, 90);
-                        row.mw_gray_mean  = mean(mw_gray_k, 'omitnan');
-                        row.mw_ddra_mean  = mean(mw_ddra_k, 'omitnan');
-                        row.iou_med       = median(iou_k, 'omitnan');
-
-                        %%
-                        
+  
                     catch ME
                         warning(ME.message);
                     end
@@ -648,7 +686,6 @@ function SUMMARY = run_sweeps(cfg, grid)
     SUMMARY = sweepio_finalize(IO);
    
 end
-
 
 
 

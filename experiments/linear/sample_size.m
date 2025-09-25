@@ -89,6 +89,9 @@ cfg.io.save_tag = sprintf('%s_%s', cfg.io.save_tag, rcsi_lbl);
 cfg.shared.noise_for_gray = true;   % false <=> W = 0
 cfg.shared.noise_for_ddra = true;   % false <=> W = 0
 cfg.shared.use_noise = true;   % or true
+cfg.metrics.enhanced = true; % computes a wider range of evaluation metrics
+%% TODO - wire as a bool for the extended plots below
+cfg.metrics.directional = struct('enable', true, 'Nd', 64, 'seed', 12345);
 
 
 % ---------- Sweep grid ----------
@@ -116,7 +119,6 @@ cfg.io.plot_rows       = [1];       % which sweep rows to plot
 cfg.io.plot_dims       = [1 2];     % output dims
 cfg.io.plot_every_k    = 1;         % plot every k-th step (declutter)
 cfg.io.save_artifacts  = false;      % offline: keep .mat files for peeking/plotting
-cfg.metrics = struct('enhanced', false);   % avoid perstep metrics
 cfg.io.plot_mode = "offline";              % keep headless unless you opt in
 
 cfg.io.base_dir = fileparts(fileparts(mfilename('fullpath'))); % or hard-code
@@ -237,3 +239,104 @@ save_plot(f2, plots_dir, sprintf('fidelity_conservatism_vs_%s_%s', var_axis, rcs
     'Formats', {'png','pdf'}, 'Resolution', 200);
 
 close all force
+
+% Reload paths for reading per-step logs
+[plots_dir, results_dir] = init_io(cfg);
+
+%% ---------- Shape-aware metrics across sweep (NEW) ----------
+dir_med = coerce_numeric(getcol(SUMMARY,'dir_eps_med'));
+dir_p90 = coerce_numeric(getcol(SUMMARY,'dir_eps_p90'));
+hout_p90= coerce_numeric(getcol(SUMMARY,'hout_p90'));
+haus_med= coerce_numeric(getcol(SUMMARY,'haus_sym_med'));
+mw_g    = coerce_numeric(getcol(SUMMARY,'mw_gray_mean'));
+mw_d    = coerce_numeric(getcol(SUMMARY,'mw_ddra_mean'));
+
+f3 = figure('Name','Shape-aware metrics','Color','w');
+tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+
+% (1) Directional ratio (Gray vs True)
+nexttile; hold on; grid on;
+plot(x, dir_med, '-o', 'LineWidth',1.6, 'DisplayName','dir\_eps median');
+plot(x, dir_p90, '-s', 'LineWidth',1.6, 'DisplayName','dir\_eps p90');
+yline(1,'--'); xlabel(xlab); ylabel('ratio'); 
+title(sprintf('%s — Directional ratio (Gray/True)', hdr)); legend('Location','best');
+
+% (2) Hausdorff_outer p90 (one-sided gap)
+nexttile; hold on; grid on;
+plot(x, hout_p90, '-o', 'LineWidth',1.6, 'DisplayName','H_{out} p90');
+xlabel(xlab); ylabel('support gap'); 
+title(sprintf('%s — H_{out} (p90)', hdr)); legend('Location','best');
+
+% (3) Symmetric Hausdorff (median)
+nexttile; hold on; grid on;
+plot(x, haus_med, '-o', 'LineWidth',1.6, 'DisplayName','Hausdorff (sym) median');
+xlabel(xlab); ylabel('distance'); 
+title(sprintf('%s — Symmetric Hausdorff', hdr)); legend('Location','best');
+
+% (4) Mean width (Gray vs DDRA)
+nexttile; hold on; grid on;
+plot(x, mw_g, '-s', 'LineWidth',1.6, 'DisplayName','Gray mean width');
+plot(x, mw_d, '-o', 'LineWidth',1.6, 'DisplayName','DDRA mean width');
+xlabel(xlab); ylabel('mean width'); 
+title(sprintf('%s — Mean width (PRE-output)', hdr)); legend('Location','best');
+
+save_plot(f3, plots_dir, sprintf('shape_aware_vs_%s_%s', var_axis, rcsi_lbl), ...
+    'Formats', {'png','pdf'}, 'Resolution', 200);
+
+
+%% ---------- Per-step panels for a selected sweep row (NEW) ----------
+% Read per-step CSV if it exists
+perstep_path = fullfile(results_dir, 'summary_perstep.csv');
+if exist(perstep_path,'file')
+    P = readtable(perstep_path);
+
+    % Map SUMMARY rows -> per-step 'row' indices
+    SUMMARY.row = (1:height(SUMMARY))';
+    % Choose a representative row to visualize (last x by default)
+    [~,ix] = max(x); 
+    row_pick = SUMMARY.row(ix);
+    K = P(P.row==row_pick, :);
+
+    f4 = figure('Name','Per-step width, coverage, and ratio','Color','w');
+    tiledlayout(3,1,'Padding','compact','TileSpacing','compact');
+
+    % (1) Width vs step
+    nexttile; hold on; grid on;
+    plot(K.k, K.wid_ddra, '-o', 'LineWidth',1.6, 'DisplayName','DDRA');
+    plot(K.k, K.wid_gray, '-s', 'LineWidth',1.6, 'DisplayName','Gray');
+    xlabel('step k'); ylabel('interval width (sum)'); 
+    title(sprintf('%s — Per-step width @ %s=%g', hdr, var_axis, x(ix))); legend('Location','best');
+
+    % (2) Coverage vs step
+    nexttile; hold on; grid on;
+    plot(K.k, K.cov_ddra, '-o', 'LineWidth',1.6, 'DisplayName','DDRA');
+    plot(K.k, K.cov_gray, '-s', 'LineWidth',1.6, 'DisplayName','Gray');
+    xlabel('step k'); ylabel('containment (%)'); 
+    title(sprintf('%s — Per-step coverage @ %s=%g', hdr, var_axis, x(ix))); legend('Location','best');
+
+    % (3) Gray/True size ratio vs step
+    nexttile; hold on; grid on;
+    if any(strcmpi(K.Properties.VariableNames,'ratio_gray_true'))
+        plot(K.k, K.ratio_gray_true, '-d', 'LineWidth',1.6, 'DisplayName','Gray/True');
+        xlabel('step k'); ylabel('ratio'); 
+        title(sprintf('%s — Per-step size ratio @ %s=%g', hdr, var_axis, x(ix)));
+        yline(1,'--');
+        legend('Location','best');
+    else
+        text(0.5,0.5,'ratio\_gray\_true not available','HorizontalAlignment','center'); axis off
+    end
+
+    save_plot(f4, plots_dir, sprintf('perstep_row%03d_%s_%s', row_pick, var_axis, rcsi_lbl), ...
+        'Formats', {'png','pdf'}, 'Resolution', 200);
+end
+
+function v = getcol(T, name)
+    % Case-insensitive column lookup that returns a NaN column if missing
+    vars = string(T.Properties.VariableNames);
+    idx  = find(strcmpi(vars, string(name)), 1);
+    if ~isempty(idx)
+        v = T.(vars(idx));
+    else
+        v = nan(height(T),1);
+    end
+end
