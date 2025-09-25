@@ -118,7 +118,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
 
                 %% New
-                pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k);
+                % pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k);
+                respect = (string(C.shared.pe_policy) == "explicit");
+                pe_eff = pe_normalize(pe, U, sys_cora, C.shared.n_k, ...
+                                      'respect_explicit_order', respect);
 
                 % ================= DDRA =================
                 t0 = tic;
@@ -146,7 +149,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                 if ~okPE
                     % mark and skip this row to keep the grid aligned
-                    emit_skip_row("PE_not_satisfied");
+                    rowi = emit_skip_row(rowi, "PE_not_satisfied");
                     clear TS_train DATASET
                     continue; % skip to next sweep point
                 end
@@ -187,25 +190,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                 catch
                     row.ab_ngen = NaN;
                 end
-
-
-                % Fairness: if ridge would inflate MAB and we're not mirroring it into Gray, skip row for both
-                % if isfield(ridgeInfo,'used') && ridgeInfo.used && ...
-                %    isfield(ridgeInfo,'policy') && string(ridgeInfo.policy)=="inflate_MAB"
-                %     emit_skip_row("ridge_inflate_MAB_unmirrored", ...
-                %         'ddra_ridge',true, ...
-                %         'ddra_lambda',ridgeInfo.lambda, ...
-                %         'ddra_kappa',ridgeInfo.kappa, ...
-                %         'ddra_ridge_policy',char(ridgeInfo.policy));
-                %     clear Xminus Xplus TS_train TS_val DATASET DATASET_val
-                %     continue;
-                % 
-                % end
-
                 
                 % If rank-deficient and allow_ridge = false, skip this sweep point
                 if isfield(ridgeInfo,'skipped') && ridgeInfo.skipped
-                    emit_skip_row("skip", ...
+                    rowi = emit_skip_row(rowi,"skip", ...
                         'ddra_ridge',false, ...
                         'ddra_lambda',0, ...
                         'ddra_kappa',NaN, ...
@@ -252,10 +240,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                     configs{idxGray}.params.W = W_pred;
                 end
 
-                %fprintf('Reporting from line 257@run_sweeps.m. \n ||W_eff||_1=%.3g  ||E*Wd||_1=%.3g\n', ...
-                %   sum(abs(generators(W_used)),'all'), ...
-                %   sum(abs(sys_cora.E*generators(coerceWToSys(sys_cora, W_used))),'all'));
-
                 % ---- Debug prints ----
                 valE = 0;
                 if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
@@ -284,6 +268,26 @@ function SUMMARY = run_sweeps(cfg, grid)
                 %     numel(VAL.y), size(VAL.y{1},1), val_hash(VAL));
                 fprintf('VAL(flat) m*s=%d  nk=%d\n', ...
                      numel(VAL.y), size(VAL.y{1},1));
+
+                %% PATCH
+                % --- hard invariants for evaluation parity ---
+                must( strcmp(val_hash(VAL), val_hash(pack_VAL_from_TS(TS_val))), 'VAL mismatch (pack parity)');
+                must( abs(configs{idxGray}.sys.dt - sys_cora.dt) < 1e-12, 'dt mismatch between Gray and true');
+                
+                % same U and x0 grids used on both sides
+                must( numel(VAL.u) == C_val.shared.n_m*C_val.shared.n_s, 'VAL blocks count mismatch');
+                for b = 1:numel(VAL.u)
+                    must( isequal(size(VAL.u{b}), [C_val.shared.n_k, size(sys_cora.B,2)]), 'VAL.u block shape mismatch');
+                    must( isequal(size(VAL.y{b}), [C_val.shared.n_k, size(sys_cora.C,1)]), 'VAL.y block shape mismatch');
+                end
+                
+                % W mapping sanity (only if Gray has disturbance channels)
+                if isprop(configs{idxGray}.sys,'nrOfDisturbances') && configs{idxGray}.sys.nrOfDisturbances>0
+                    Wpred = normalizeWForGray(configs{idxGray}.sys, W_used);
+                    must( ~isempty(Wpred), 'W_pred empty while Gray expects disturbances');
+                    must( size(center(Wpred),1)==configs{idxGray}.sys.nrOfDisturbances, 'W_pred dim mismatch');
+                end
+
     
                 % DEBUG SEQUENCE - START
                 % Quick internal parity check (non-fatal; hits breakpoint if mismatch)
@@ -403,9 +407,9 @@ function SUMMARY = run_sweeps(cfg, grid)
                         Uk = VAL.u{b};                                    % (n_k × m)
                         Yb = VAL.y{b};                                    % (n_k × ny)
                 
-                        for k = 1:nkv
+                        for ps = 1:nkv
                             Xk   = reduce(Xk, 'girard', Kred);
-                            uk   = Uk(k,:).';
+                            uk   = Uk(ps,:).';
                             U_pt = zonotope(uk);
                 
                             % PRE-update output at time k INCLUDING feedthrough
@@ -416,11 +420,11 @@ function SUMMARY = run_sweeps(cfg, grid)
                             lo   = try_get(@() infimum(Iv), @() Iv.inf);
                             hi   = try_get(@() supremum(Iv), @() Iv.sup);
                             wvec = max(hi - lo, 0);
-                            wid_sums(k)   = wid_sums(k)   + sum(double(wvec), 'omitnan');
-                            wid_counts(k) = wid_counts(k) + 1;
+                            wid_sums(ps)   = wid_sums(ps)   + sum(double(wvec), 'omitnan');
+                            wid_counts(ps) = wid_counts(ps) + 1;
                 
                             % containment in interval hull of Yset
-                            y_meas = Yb(k,:).';
+                            y_meas = Yb(ps,:).';
                             if contains_interval(y_meas, Yset, tol), num_in = num_in + 1; end
                             num_all = num_all + 1;
                 
@@ -442,8 +446,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming( ...
                         sys_ddra, R0, [], W_used, M_AB, C, VAL);
                     Tinfer = toc(t2);
-                    [sizeI_ddra, wid_ddra_k] = normalize_widths( ...
-                        wid_ddra_k, size(sys_true_dt.C,1), getfielddef(cfg.metrics,'width_agg',"mean"));
+                    [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k, size(sys_true_dt.C,1), "mean");
                     sizeI_ddra_k = wid_ddra_k;
                 end
 
@@ -453,8 +456,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 [sizeI_gray, wid_gray_k] = gray_infer_size_on_VAL(configs{idxGray}.sys, TS_val, C, ...
                     configs{idxGray}.params, 'overrideW', W_pred, 'width_agg', 'sum');
                 Tinfer_g   = toc(t4);
-                [sizeI_gray, wid_gray_k] = normalize_widths( ...
-                    wid_gray_k, size(configs{idxGray}.sys.C,1), "mean");
+                [sizeI_gray, wid_gray_k] = normalize_widths(wid_gray_k, size(configs{idxGray}.sys.C,1), "mean");
 
                 cov_ddra_k = []; cov_gray_k = []; fv_ddra = []; fv_gray = [];
 
@@ -540,11 +542,11 @@ function SUMMARY = run_sweeps(cfg, grid)
                             Rt = reach(sys_true_dt, params_true, optReach).timePoint.set;
                             Rg = reach(configs{idxGray}.sys, params_gray, optReach).timePoint.set;
                     
-                            for k = 1:nkv
-                                Yt = linearMap(Rt{k}, sys_true_dt.C);  yt = norm(Yt);
-                                Yg = linearMap(Rg{k}, configs{idxGray}.sys.C); yg = norm(Yg);
+                            for ps = 1:nkv
+                                Yt = linearMap(Rt{ps}, sys_true_dt.C);  yt = norm(Yt);
+                                Yg = linearMap(Rg{ps}, configs{idxGray}.sys.C); yg = norm(Yg);
                                 if yt > 0
-                                    ratio_k(k) = ratio_k(k) + yg/yt;  cnt_k(k) = cnt_k(k) + 1;
+                                    ratio_k(ps) = ratio_k(ps) + yg/yt;  cnt_k(ps) = cnt_k(ps) + 1;
                                 end
                             end
                         end
@@ -564,12 +566,13 @@ function SUMMARY = run_sweeps(cfg, grid)
                         
                         for b = 1:numel(VAL.x0)
                             Ublk = VAL.u{b};
-                            for k = 1:nkv
-                                uk = get_uk(Ublk, k, size(sys_true_dt.D,2)); % (m x 1)
+                            for ps = 1:nkv
+                                uk = get_uk(Ublk, ps, size(sys_true_dt.D,2)); % (m x 1)
                         
                                 % True Y_k and Gray Y_k as zonotopes (outer-approx if needed)
-                                Yt_k = toZono(linearMap(Rt{k}, sys_true_dt.C));
-                                Yg_k = toZono(linearMap(Rg{k}, configs{idxGray}.sys.C));
+                                Yt_k = toZono(linearMap(Rt{ps}, sys_true_dt.C));
+                                Yg_k = toZono(linearMap(Rg{ps}, configs{idxGray}.sys.C));
+
                         
                                 % Support values along all directions (vectorized)
                                 st = support_zono_vec(Ddirs, center(Yt_k), generators(Yt_k)) + Ddirs'*(sys_true_dt.D*uk);
@@ -581,8 +584,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                                 dir_eps_all = [dir_eps_all; eps_kd(:)]; 
                                 dir_del_all = [dir_del_all; del_kd(:)]; 
 
-                                Hout_k(k) = Hout_k(k) + max(del_kd);
-                                cnt_kH(k) = cnt_kH(k) + 1;
+                                Hout_k(ps) = Hout_k(ps) + max(del_kd);
+                                cnt_kH(ps) = cnt_kH(ps) + 1;
                             end
                         end
                         
@@ -600,6 +603,47 @@ function SUMMARY = run_sweeps(cfg, grid)
 
 
                         artifact.metrics.ratio_gray_vs_true_k = ratio_k ./ max(1, cnt_k);
+
+                        % ---------- NEW: symmetric Hausdorff & mean-width (per-step) ----------
+                        Nd   = getfielddef(dir_cfg,'Nd',64);
+                        ny   = size(sys_true_dt.C,1);
+                        Ddirs = sample_unit_dirs(ny, Nd, getfielddef(dir_cfg,'seed',12345)); % you already have this
+                        
+                        hd_sym_k   = zeros(nkv,1);
+                        mw_gray_k  = zeros(nkv,1);
+                        mw_ddra_k  = zeros(nkv,1);
+                        iou_k      = nan(nkv,1);
+                        
+                        b0 = 1;                               % representative VAL block
+                        Xk_rep = reduce(VAL.R0 + VAL.x0{b0}, 'girard', Kred);
+                        for ps = 1:nkv
+                            % symmetric Hausdorff between True and Gray via support gaps on sampled dirs
+                            hd_sym_k(ps)  = hausdorff_dir(Yt_k, Yg_k, Ddirs);
+                            
+                            % mean width for Gray (direction-averaged support sum)
+                            mw_gray_k(ps) = mean_width_dir(Yg_k, Ddirs);
+                            Xk_rep = reduce(Xk_rep, 'girard', Kred);
+                            uk     = VAL.u{b0}(ps,:).';
+                            Yd_k   = sys_true_dt.C*Xk_rep + sys_true_dt.D*uk;   % PRE-update output set
+                            mw_ddra_k(ps) = mean_width_dir(toZono(Yd_k), Ddirs); % your helper
+                        
+                            % propagate PRE→POST
+                            Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
+                        end
+                        
+                        artifact.metrics.haus_sym_k   = hd_sym_k;
+                        artifact.metrics.mw_gray_k    = mw_gray_k;
+                        artifact.metrics.mw_ddra_k    = mw_ddra_k;
+                        artifact.metrics.iou_k        = iou_k;
+                        
+                        % Scalar summaries for CSV
+                        row.haus_sym_med  = median(hd_sym_k, 'omitnan');
+                        row.haus_sym_p90  = prctile(hd_sym_k, 90);
+                        row.mw_gray_mean  = mean(mw_gray_k, 'omitnan');
+                        row.mw_ddra_mean  = mean(mw_ddra_k, 'omitnan');
+                        row.iou_med       = median(iou_k, 'omitnan');
+
+                        %%
                         
                     catch ME
                         warning(ME.message);
@@ -640,7 +684,6 @@ function SUMMARY = run_sweeps(cfg, grid)
                 stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ...
                                ratio_k, cov_ddra_k, cov_gray_k);
 
-
                 
                 %% end patch
                 row.use_noise = use_noise;
@@ -649,9 +692,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 row.ddra_kappa       = ridgeInfo.kappa;
                 row.ddra_ridge_policy= char(ridgeInfo.policy);
 
-    
                 % --- Initialize schema & write/accumulate ----
-                write_row(row, csv_path, LM);
+                sweep_write_row(row, csv_path, LM);
                 fprintf('[%s] row %d/%d (%.1f%%) | elapsed %s | ERA %s | avg/row %.2fs | tag=%s\n', ...
                         datestr(now,'HH:MM:SS'), rowi, NALL, 100*rowi/NALL, ...
                         char(duration(0,0,toc(t0_all),'Format','hh:mm:ss')), ...
@@ -677,8 +719,6 @@ function SUMMARY = run_sweeps(cfg, grid)
         SUMMARY = cell2table(cells(1:rowi,:), 'VariableNames', hdr);
     end
 
-    % ---------- nested helpers (drop-in) ------------------------------------
-
     function write_row_init_if_needed(row, csv_path, LM)
         % Initializes header and in-memory cells (if needed) using caller scope.
         % Relies on outer-scope variables: hdr, cells, Ntot, rowi
@@ -694,7 +734,7 @@ function SUMMARY = run_sweeps(cfg, grid)
         end
     end
 
-    function write_row(row, csv_path, LM)
+    function sweep_write_row(row, csv_path, LM)
         % Writes one row to CSV or in-memory cells
         % Relies on outer-scope: hdr, cells, rowi
         write_row_init_if_needed(row, csv_path, LM);
@@ -706,242 +746,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                 cells{rowi, j} = v;
             end
         end
-    end
-    
-    function emit_skip_row(reason, varargin)
-        % Common skip pathway to avoid copy-paste
-        % varargin lets allows passing name/value that end up on row fields
-        % Relies on outer-scope vars already in run_sweeps: C, D, alpha_w, pe,
-        % Zinfo, Tlearn, Tcheck, use_noise, csv_path, LM, rowi
-        if exist('Tlearn','var'),        Tlearn_val = Tlearn;        else, Tlearn_val = NaN; end
-        if exist('Tcheck','var'),        Tcheck_val = Tcheck;        else, Tcheck_val = NaN; end
-        if exist('Tinfer','var'),        Tinfer_val = Tinfer;        else, Tinfer_val = NaN; end
-        if exist('Tlearn_g','var'),      Tlearn_g_val = Tlearn_g;    else, Tlearn_g_val = NaN; end
-        if exist('Tvalidate_g','var'),   Tvalidate_g_val = Tvalidate_g; else, Tvalidate_g_val = NaN; end
-        if exist('Tinfer_g','var'),      Tinfer_g_val = Tinfer_g;    else, Tinfer_g_val = NaN; end
-    
-        rowi = rowi + 1;
-        row = pack_row(C, D, alpha_w, pe, ...
-            NaN, NaN, NaN, NaN, NaN, ...
-            Zinfo.rankZ, Zinfo.condZ, ...
-            Tlearn_val, Tcheck_val, Tinfer_val, Tlearn_g_val, Tvalidate_g_val, Tinfer_g_val);
-        if ~isfield(row,'skipped'),     row.skipped = false; end
-        if ~isfield(row,'skip_reason'), row.skip_reason = ""; end
-        row.use_noise   = use_noise;
-
-        % Ensure schema stability for columns that appear in non-skip rows
-        row.cov_auc_gray = NaN;
-        row.cov_auc_ddra = NaN;
-        row.fv_gray_med  = NaN;
-        row.fv_ddra_med  = NaN;
-        
-        row.dir_eps_med  = NaN;
-        row.dir_eps_p90  = NaN;
-        row.hout_med     = NaN;
-        row.hout_p90     = NaN;
-        
-        % Ridge defaults (match non-skip rows)
-        row.ddra_ridge        = false;
-        row.ddra_lambda       = 0;
-        row.ddra_kappa        = NaN;
-        row.ddra_ridge_policy = "none";
-
-    
-        % attach any extra fields (e.g., ridge info)
-        for k = 1:2:numel(varargin)
-            row.(varargin{k}) = varargin{k+1};
-        end
-    
-        write_row(row, csv_path, LM);
-    end
-    
-    function idxGray = pick_gray_config(configs, C)
-        want = "graySeq";
-        try
-            if isfield(C,'gray') && isfield(C.gray,'methodsGray') && ~isempty(C.gray.methodsGray)
-                want = string(C.gray.methodsGray(1));
-            end
-        catch
-        end
-        idxGray = find(cellfun(@(c) isfield(c,'name') && want==string(c.name), configs), 1, 'first');
-        if isempty(idxGray), idxGray = min(2, numel(configs)); end
-    end
-    
-    function Wfg = build_W_for_gray(sys_cora, ~, W_used)
-        % Map state-noise W_used -> disturbance space so E*Wfg \supseteq W_used.
-        if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
-            Wfg = normalizeWForGray(sys_cora, W_used);
-        else
-            Wfg = [];
-        end
-    end
-    
-    function Wpred = build_W_pred(gray_sys, ~, W_used)
-        if isprop(gray_sys,'nrOfDisturbances') && gray_sys.nrOfDisturbances > 0
-            Wpred = normalizeWForGray(gray_sys, W_used);
-        else
-            Wpred = [];
-        end
-    end
-
-    function ensure_perstep_header(csv_perstep)
-        if ~exist(csv_perstep,'file') || dir(csv_perstep).bytes==0
-            fid_h = fopen(csv_perstep,'w');
-            fprintf(fid_h,'row,k,wid_ddra,wid_gray,ratio_gray_true,cov_ddra,cov_gray\n');
-            fclose(fid_h);
-        end
-    end
-    
-    function stream_perstep(csv_perstep, row_index, wid_ddra_k, wid_gray_k, ratio_k, cov_ddra_k, cov_gray_k)
-        ensure_perstep_header(csv_perstep);
-        nkv = max([numel(wid_gray_k), numel(wid_ddra_k), numel(ratio_k), numel(cov_ddra_k), numel(cov_gray_k)]);
-        if isempty(wid_ddra_k), wid_ddra_k = nan(nkv,1); end
-        if isempty(wid_gray_k), wid_gray_k = nan(nkv,1); end
-        if isempty(ratio_k),    ratio_k    = nan(nkv,1); end
-        if isempty(cov_ddra_k), cov_ddra_k = nan(nkv,1); end
-        if isempty(cov_gray_k), cov_gray_k = nan(nkv,1); end
-    
-        fid_ps = fopen(csv_perstep,'a');
-        for kk = 1:nkv
-            fprintf(fid_ps, '%d,%d,%.12g,%.12g,%.12g,%.12g,%.12g\n', ...
-                row_index, kk, wid_ddra_k(min(kk,end)), wid_gray_k(min(kk,end)), ...
-                ratio_k(min(kk,end)), cov_ddra_k(min(kk,end)), cov_gray_k(min(kk,end)));
-        end
-        fclose(fid_ps);
-    end
-
-    function Wplot = pick_W_for_plot(W_used, use_noise)
-        if use_noise, Wplot = W_used;
-        else,        Wplot = zonotope(zeros(size(center(W_used),1),1));
-        end
-    end
-    
-    function logf(varargin)
-        % toggle with cfg.io.verbose=true/false
-        try, vb = logical(getfielddef(cfg,'io',struct()).verbose);
-        catch, vb = true;
-        end
-        if vb, fprintf(varargin{:}); end
-    end
-
-    function D = sample_unit_dirs(p, Nd, seed)
-        if nargin<3 || isempty(seed), seed = 12345; end
-        rng(seed,'twister');
-        X = randn(p, Nd);
-        n = sqrt(sum(X.^2,1)) + eps;
-        D = X ./ n;
-    end
-    
-    function s = support_zono_vec(Ddirs, c, G)
-    % Ddirs: (p x Nd), c: (p x 1), G: (p x g)
-        if isempty(G), s = Ddirs' * c; return; end
-        s = Ddirs' * c + sum(abs(Ddirs' * G), 2);
-    end
-    
-    function uk = get_uk(Ublk, k, m)
-        if m==0, uk = zeros(0,1); return; end
-        Ublk = squeeze(Ublk);
-        if size(Ublk,1) == m
-            uk = Ublk(:, min(k, size(Ublk,2)));
-        elseif size(Ublk,2) == m
-            uk = Ublk(min(k, size(Ublk,1)), :)';
-        else
-            error('get_uk: U has incompatible size for m=%d.', m);
-        end
-    end
-
-    function Z = toZono(S)
-    % Convert various CORA set types to a (conservative) zonotope.
-        if isa(S,'zonotope')
-            Z = S;
-        elseif isa(S,'polyZonotope') || isa(S,'conZonotope')
-            Z = zonotope(S);   % CORA outer-approx
-        else
-            try
-                Z = zonotope(S);
-            catch
-                error('toZono: unsupported set type %s', class(S));
-            end
-        end
-    end
-
-
-end
-
-function s = stable_seed(D, alpha_w, pe, dyn, typ, tag)
-    o     = double(getfielddef(pe,'order',0));
-    smode = double(sum(char(string(getfielddef(pe,'mode','')))));
-    dyn   = char(string(dyn));
-    typ   = char(string(typ));
-    tag   = char(string(tag));
-    s64   = uint64(1469598103934665603);
-    K     = uint64([D, round(alpha_w*1e6), o, smode, sum(double(dyn)), sum(double(typ)), sum(double(tag))]);
-    for v = K
-        s64 = bitxor(s64, uint64(v));
-        s64 = s64 * 1099511628211;
-    end
-    s = uint32(mod(s64, uint64(2^31-1))); if s==0, s=1; end
+    end         
 end
 
 
-function h = val_hash(v)
-%VAL_HASH Deterministic hash of structs/cells/arrays for parity checks.
-% Returns lowercase hex SHA-256 string.
 
-    md = java.security.MessageDigest.getInstance('SHA-256');
-    feed(md, v);
-    h = lower(reshape(dec2hex(typecast(md.digest(),'uint8'))',1,[]));
-end
 
-function feed(md, v)
-    if isnumeric(v) || islogical(v)
-        % shape + class + raw bytes
-        updateStr(md, class(v));
-        updateIntVec(md, int64(size(v)));
-        if ~isempty(v)
-            b = typecast(v(:), 'uint8');  % column-major
-            md.update(b);
-        end
-    elseif ischar(v)
-        updateStr(md, 'char'); md.update(uint8(v(:)));
-    elseif isstring(v)
-        updateStr(md, 'string');
-        for s = v(:).'
-            feed(md, char(s));
-        end
-    elseif iscell(v)
-        updateStr(md, 'cell'); updateIntVec(md, int64(size(v)));
-        for i = 1:numel(v), feed(md, v{i}); end
-    elseif isstruct(v)
-        updateStr(md, 'struct'); updateIntVec(md, int64(size(v)));
-        f = sort(fieldnames(v));
-        for k = 1:numel(f)
-            fn = f{k}; md.update(uint8(fn));
-            for i = 1:numel(v)
-                feed(md, v(i).(fn));
-            end
-        end
-    elseif isa(v,'zonotope')
-        % If hashing sets, reduce to center/generators
-        try
-            feed(md, center(v)); feed(md, generators(v));
-        catch
-            updateStr(md, class(v));
-        end
-    else
-        % Fallback to class+num2str (last resort)
-        updateStr(md, ['<', class(v), '>']);
-        try
-            feed(md, num2str(v));
-        catch
-        end
-    end
-end
 
-function updateStr(md, s), md.update(uint8(s)); end
-function updateIntVec(md, v), md.update(typecast(v(:),'uint8')); end
-function v = try_get(f, g)
-    try, v = f();
-    catch, v = g();
-    end
-end
+
+
+
+

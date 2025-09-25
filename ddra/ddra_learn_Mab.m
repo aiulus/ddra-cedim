@@ -2,8 +2,8 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
 % DDRA_LEARN_MAB  Learn matrix-zonotope over [A B] with optional ridge guard.
 % If Z is rank-deficient:
 %   - allow_ridge = false  -> mark skip (return []), caller should skip this grid point
-%   - allow_ridge = true   -> ridge with λ, then widen either M_AB (extra generator)
-%                             or W (extra generator) proportional to λ*||Z^\dagger||_2.
+%   - allow_ridge = true   -> ridge with lambda, then widen either M_AB (extra generator)
+%                             or W (extra generator) proportional to lambda*||Z^\dagger||_2.
 
     if nargin < 7, C = struct(); end
     allow_ridge = getfielddef(C,'ddra',struct()); 
@@ -50,9 +50,11 @@ function [M_AB, ridgeInfo, W_out] = ddra_learn_Mab(Xminus, Uminus, Xplus, W_in, 
         Zpinv_ridge = Z' / (Z*Z' + lambda * eye(n_rows));  % (n_cols x n_rows)
         M_AB = X1W * Zpinv_ridge;
 
-        % Uncertainty inflation proportional to λ * ||Z^†||_2
-        kappa = norm(Zpinv_ridge, 2);                      % proxy for ||Z^†||
+        % Uncertainty inflation proportional to lambda *
+        % ||Z^dagger||_2
+        kappa = norm(Zpinv_ridge, 2);                      % proxy for ||Z^dagger||
         eps_scale = ridge_gamma * lambda * kappa;
+        eps_scale = max(eps_scale, 1e-12); 
 
         ridgeInfo.used    = true;
         ridgeInfo.lambda  = lambda;

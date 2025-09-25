@@ -1,0 +1,1 @@
+function updateStr(md, s), md.update(uint8(s)); end

@@ -1,0 +1,1 @@
+function updateIntVec(md, v), md.update(typecast(v(:),'uint8')); end
