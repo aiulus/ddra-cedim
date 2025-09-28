@@ -1,53 +1,29 @@
-function Wd = normalizeWForGray(sys_, W_in, eps_inf)
-% Map state-noise W_in to a disturbance-space set Wd s.t. E*Wd \supseteq W_in.
+function Wd = normalizeWForGray(sys_, W_in)
+% Conservative preimage: find Wd in disturbance space so that E*Wd ⊇ W_in.
 
-    if ~isa(W_in,'zonotope') || isempty(W_in)
-        warning('normalizeWForGray: W_in must be a zonotope; returning zero set.');
-        Wd = zonotope(zeros(max(1, sys_.nrOfDisturbances),1));
-        return;
+    % Basic guards
+    if isempty(W_in) || ~isa(W_in,'zonotope')
+        q = getfielddef(sys_,'nrOfDisturbances',0);
+        Wd = iff(q>0, zonotope(zeros(q,1)), []);  return;
     end
-
-    E = getfielddef(sys_, 'E', []);
+    E = getfielddef(sys_,'E',[]);
     if isempty(E)
-        Wd = zonotope(zeros(max(1, sys_.nrOfDisturbances),1));
-        return;
+        % fall back to B if you use E=B in your models
+        E = getfielddef(sys_, 'B', []);
     end
+    q = size(E,2);  if q==0, Wd = []; return; end
 
-    nxW = size(center(W_in),1);
-    [nE, nd] = size(E);
-    if nxW ~= nE
-        warning('normalizeWForGray: dim(W_in)=%d does not match rows(E)=%d; returning zero set.', nxW, nE);
-        Wd = zonotope(zeros(nd,1));
-        return;
-    end
+    % If W_in already lives in disturbance space, pass through
+    if size(center(W_in),1) == q, Wd = W_in; return; end
 
-    c  = center(W_in);      % nE x 1
-    Gx = generators(W_in);  % nE x g
+    % Interval radius in state space
+    Ix = interval(W_in);
+    rad_x = 0.5*(supremum(Ix) - infimum(Ix));      % nx×1
 
-    rc = lsqminnorm(E, c);          % nd x 1
-    R  = zeros(nd, size(Gx,2));
-    res = zeros(1, size(Gx,2));
-    for j = 1:size(Gx,2)
-        rj     = lsqminnorm(E, Gx(:,j));  % nd x 1
-        R(:,j) = rj;
-        res(j) = norm(E*rj - Gx(:,j), inf);
-    end
+    % Row-sum bound: choose scalar t so that |E w|_∞ ≥ rad_x elementwise
+    rs = sum(abs(E),2);  rs(rs==0) = eps;
+    t  = max(rad_x ./ rs);                           % scalar
 
-    if ~exist('eps_inf','var') || isempty(eps_inf)
-        % Residual-adaptive padding (no capping)
-        eps_inf = max([res, 0]) + 1e-12;
-        % If you prefer a floor (not a cap), do:
-        % eps_inf = max(eps_inf, 1e-12);
-    end
-
-    if eps_inf > 0
-        pad = eps_inf * eye(nd);
-        Wd  = zonotope([rc, [R, pad]]);
-    else
-        Wd  = zonotope([rc, R]);
-    end
-end
-
-function v = getfielddef(S,f,d)
-    if isstruct(S) && isfield(S,f), v = S.(f); else, v = d; end
+    % Build diagonal q-dim box with radius t (center 0)
+    Wd = zonotope(zeros(q,1), t*eye(q));
 end

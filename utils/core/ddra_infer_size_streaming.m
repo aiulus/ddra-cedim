@@ -151,4 +151,3 @@ function tf = contains_interval(y, Yset, tol)
     end
     tf = all(y <= hi + tol) && all(y >= lo - tol);
 end
-

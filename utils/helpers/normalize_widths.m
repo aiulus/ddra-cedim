@@ -1,6 +1,5 @@
-% utils/metrics/normalize_widths.m
 function [size_scalar, wid_k] = normalize_widths(wid_k, q, agg)
-    if nargin<3 || isempty(agg), agg = "mean"; end  % default used in paper
+    if nargin<3 || isempty(agg), agg = "mean"; end  
     switch string(agg)
         case "mean"
             wid_k = wid_k ./ q;

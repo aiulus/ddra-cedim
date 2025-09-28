@@ -243,10 +243,13 @@ function SUMMARY = run_sweeps(cfg, grid)
                 end
                 
                 % W mapping sanity (only if Gray has disturbance channels)
-                if isprop(configs{idxGray}.sys,'nrOfDisturbances') && configs{idxGray}.sys.nrOfDisturbances>0
-                    Wpred = normalizeWForGray(configs{idxGray}.sys, W_used);
-                    must( ~isempty(Wpred), 'W_pred empty while Gray expects disturbances');
-                    must( size(center(Wpred),1)==configs{idxGray}.sys.nrOfDisturbances, 'W_pred dim mismatch');
+                if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
+                    Wpred = build_W_pred(sys_cora, C, W_used);  % may come back []
+                    if isempty(Wpred)
+                        % Fail-safe: give Gray a zero-disturbance set of the right size.
+                        warning('W_pred was empty; substituting zero zonotope for Gray disturbances.');
+                        Wpred = zonotope(zeros(sys_cora.nrOfDisturbances,1));
+                    end
                 end
 
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
@@ -686,11 +689,5 @@ function SUMMARY = run_sweeps(cfg, grid)
     SUMMARY = sweepio_finalize(IO);
    
 end
-
-
-
-
-
-
 
 

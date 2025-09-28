@@ -340,3 +340,60 @@ function v = getcol(T, name)
         v = nan(height(T),1);
     end
 end
+
+
+%% ---------- Artifact-derived per-step plots ----------
+artifact_dir = fullfile(results_dir, 'artifacts');
+if exist(artifact_dir,'dir')
+    % Use the same row as earlier (last x by default). If you want another row,
+    % set row_pick manually here.
+    if ~exist('row_pick','var')
+        SUMMARY.row = (1:height(SUMMARY))';
+        [~,ix] = max(x);
+        row_pick = SUMMARY.row(ix);
+    end
+
+    art_path = find_artifact_by_row(artifact_dir, row_pick);
+    if ~isempty(art_path)
+        % Base name for saving
+        savebase = fullfile(plots_dir, sprintf('row%04d_artifacts_%s_%s', row_pick, var_axis, rcsi_lbl));
+
+        % (A) Per-step fidelity & sizes from artifact
+        plot_perstep_fidelity_sizes(art_path, ...
+            'Dims', cfg.io.plot_dims, ...
+            'Reduce', getfielddef(cfg.lowmem,'zonotopeOrder_cap', 60), ...
+            'SaveBase', savebase, ...
+            'Show', true);
+
+        % (B) Overlays of reachable sets at selected steps
+        nkv = unique(coerce_numeric(SUMMARY.n_k)); 
+        if numel(nkv)==1, nkv = nkv(1); else, nkv = cfg.shared.n_k_val; end
+        Klist = unique([1, round(nkv/2), nkv]);  % 1, mid, last
+        overlay_reach_sets(art_path, ...
+            'Dims', cfg.io.plot_dims, ...
+            'Klist', Klist, ...
+            'Reduce', getfielddef(cfg.lowmem,'zonotopeOrder_cap', 60), ...
+            'SaveBase', savebase, ...
+            'Show', true);
+    else
+        warning('No artifact .mat found for row %d in %s. Skipping artifact-derived plots.', row_pick, artifact_dir);
+    end
+else
+    warning('Artifact directory not found: %s. Set cfg.io.save_artifacts=true if needed.', artifact_dir);
+end
+
+% --------- helpers (local to this script) ----------
+function p = find_artifact_by_row(artifact_dir, rownum)
+    % Try common patterns: row_####.mat, artifact_row_####.mat, etc.
+    p = "";
+    pat = sprintf('row_%04d', rownum);
+    L = dir(fullfile(artifact_dir, '*.mat'));
+    % Prefer exact row tag, otherwise fall back to first .mat
+    for k = 1:numel(L)
+        if contains(L(k).name, pat), p = string(fullfile(L(k).folder, L(k).name)); break; end
+    end
+    if p=="" && ~isempty(L)
+        % Fallback: first .mat (last resort)
+        p = string(fullfile(L(1).folder, L(1).name));
+    end
+end
