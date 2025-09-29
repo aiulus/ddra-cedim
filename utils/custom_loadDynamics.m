@@ -521,12 +521,12 @@ switch dynamics
         % Patch
         nx = size(A_cl,1);
         ny = size(C_d,1);
-        E  = B_ex;                          % expose disturbance channel aligned with inputs
+        %E  = B_ex;                          % expose disturbance channel aligned with inputs
+        E = eye(nx);
         F  = zeros(ny, size(E,2));          % no output disturbance map
         c  = zeros(nx,1);                   % zero state offset
         k  = zeros(ny,1);                   % zero output offset
         sys = linearSysDT(A_cl, B_ex, c, C_d, D_d, k, E, F, dt);
-
 
 
         % ---------- sets (dim_u becomes m) ----------   
@@ -547,7 +547,6 @@ switch dynamics
         p_true = struct('m',m_vec,'k_s',ks,'c_d',cds,'l',l,'L',Lw,'xbar',xbar);
         p_true.ctrl = struct('K', K, 'S', S);
         p_true.m_act = size(S,2);
-
 
     case "ddra5"
         A = [-1 -4  0  0  0;

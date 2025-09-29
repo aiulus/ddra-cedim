@@ -13,6 +13,9 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     % -------- Sweep axes & base config -----------------------------------
     [axes, baseC] = init_sweep_axes(cfg, grid);
+
+    % DDRA variant selector: "std" (default) or "meas"
+    variant = string(getfielddef(getfielddef(cfg,'ddra',struct()), 'variant', "std"));
     
     % Precompute for in-memory mode only (IO helper will use this)
     Ntot = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * ...
@@ -157,16 +160,42 @@ function SUMMARY = run_sweeps(cfg, grid)
                     numel(TS_val), size(TS_val{1}.y,1), C_val.shared.n_m*C_val.shared.n_s);
 
                 % Learn M_AB
+                % t1 = tic;
+                % try
+                %     % New signature with ridge control & W_eff (possibly inflated for ridge)
+                %     [M_AB, ridgeInfo, W_eff] = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra, C);
+                % catch
+                %     % Old signature fallback (keeps older ddra_learn_Mab working)
+                %     M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
+                %     ridgeInfo = struct('used', false, 'skipped', false, ...
+                %                        'lambda', 0, 'kappa', NaN, 'policy', "none");
+                %     W_eff = W;  % no inflation in legacy path
+                % end
+                % Tcheck = toc(t1);
+                
+                % TODO: bring time measurement to just around ddra_learn_*
                 t1 = tic;
-                try
-                    % New signature with ridge control & W_eff (possibly inflated for ridge)
-                    [M_AB, ridgeInfo, W_eff] = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra, C);
-                catch
-                    % Old signature fallback (keeps older ddra_learn_Mab working)
-                    M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
-                    ridgeInfo = struct('used', false, 'skipped', false, ...
-                                       'lambda', 0, 'kappa', NaN, 'policy', "none");
-                    W_eff = W;  % no inflation in legacy path
+                switch variant
+                  case "std"
+                    try
+                      [M_AB, ridgeInfo, W_eff] = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra, C);
+                    catch
+                      M_AB = ddra_learn_Mab(Xminus, Uminus, Xplus, W, Zinfo, sys_ddra);
+                      ridgeInfo = struct('used', false, 'skipped', false, 'lambda', 0, 'kappa', NaN, 'policy', "none");
+                      W_eff = W;
+                    end
+                    learned_kind = "std";
+                
+                    case "meas"
+                    [ABc, AV_one, V_meas, info_meas] = ddra_learn_measnoise(Xminus, Uminus, Xplus, W, sys_ddra, C);
+                    % For a clean schema, emulate outputs:
+                    M_AB = [];   % not used in this branch
+                    ridgeInfo = struct('used', false, 'skipped', false, 'lambda', 0, 'kappa', NaN, 'policy', "measnoise");
+                    W_eff = W;   % base W stays (can still be mapped/inflated later)
+                    learned_kind = "meas";
+                
+                  otherwise
+                    error('Unknown cfg.ddra.variant = %s', variant);
                 end
                 Tcheck = toc(t1);
 
@@ -218,7 +247,8 @@ function SUMMARY = run_sweeps(cfg, grid)
                 idxGray = pick_gray_config(configs, C);
 
                 % ---- Set W_pred only if identified Gray sys has disturbance channels ----
-                W_pred = build_W_pred(configs{idxGray}.sys, U, W_used);
+                % W_pred = build_W_pred(configs{idxGray}.sys, U, W_used);
+                W_pred = W_used;
                 if ~isfield(configs{idxGray},'params') || isempty(configs{idxGray}.params)
                     configs{idxGray}.params = struct();
                 end
@@ -256,16 +286,35 @@ function SUMMARY = run_sweeps(cfg, grid)
                 % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
                 sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
                 
+                % artifact = struct();
+                % artifact.sys_gray = configs{idxGray}.sys;
+                % artifact.sys_ddra = sys_true_dt;
+                % artifact.VAL      = VAL;                % exact VAL used
+                % artifact.W_eff    = W_used;             % actually used in inference
+                % artifact.M_AB     = M_AB;
+                % artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
+                %     'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, ...
+                %     'n_s', C.shared.n_s, 'n_k', C.shared.n_k, 'pe', pe, ...
+                %     'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
+
                 artifact = struct();
                 artifact.sys_gray = configs{idxGray}.sys;
                 artifact.sys_ddra = sys_true_dt;
-                artifact.VAL      = VAL;                % exact VAL used
-                artifact.W_eff    = W_used;             % actually used in inference
-                artifact.M_AB     = M_AB;
+                artifact.VAL      = VAL;
+                artifact.W_eff    = W_used;
                 artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
-                    'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, ...
-                    'n_s', C.shared.n_s, 'n_k', C.shared.n_k, 'pe', pe, ...
-                    'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
+                  'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
+                  'n_k', C.shared.n_k, 'pe', pe, 'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
+                
+                if variant == "std"
+                    artifact.M_AB = M_AB;
+                else
+                    artifact.AB_meas_center = ABc;
+                    artifact.AV_oneterm     = AV_one;
+                    artifact.V_meas         = V_meas;
+                end
+
+
                 artifact.VAL.R0   = R0;
                 artifact.VAL.U    = U;
                 
@@ -282,25 +331,64 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                     reach_dir = fullfile(plots_dir,'reach');
                     if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
-                    
                     savename_png = fullfile(reach_dir, sprintf('row_%04d_y%d%d.png', row_index, dims(1), dims(2)));
-                    % (If save_plot also writes PDF, it can derive .pdf from this base. If not,
-                    % it will at least save a valid .png and not warn.)
-
+                    
+                    extraArgs = {};
+                    if variant == "std"
+                        extraArgs = {'MAB', M_AB};
+                    else
+                        extraArgs = {'Variant','meas', 'ABc', ABc, 'AV', AV_one, 'Vmeas', V_meas};
+                    end
+                    
                     plot_reach_all_onepanel( ...
                         sys_true_dt, ...
                         configs{idxGray}.sys, ...
                         VAL, ...
-                        'MAB', M_AB, ...
-                        'W', W_plot, ...
+                        'W', pick_W_for_plot(W_used, use_noise), ...
                         'Dims', dims, ...
                         'ShowSamples', false, ...
                         'Save', savename_png, ...
-                        'ReachOptions', getfielddef(C.shared,'options_reach', ...
-                                            struct('zonotopeOrder',100,'reductionTechnique','girard')));
+                        'ReachOptions', getfielddef(C.shared,'options_reach', struct('zonotopeOrder',100,'reductionTechnique','girard')), ...
+                        extraArgs{:});
 
 
                 end
+
+                % --- SAFETY EVAL (if enabled) ---
+                SFT = getfielddef(getfielddef(cfg,'metrics',struct()), 'safety', struct('enable',false));
+                if getfielddef(SFT,'enable',false)
+                    Hs   = SFT.H; hs = SFT.h;
+                    kset = getfielddef(SFT,'k_set', 1:C_val.shared.n_k_val);
+                    tauv = getfielddef(SFT,'tau_sweep', linspace(0,0.2,21));
+                    rord = getfielddef(SFT,'reach_reduce', 80);
+
+                    [safe_true, safe_alg_tau] = eval_safety_labels( ...
+                        sys_true_dt, configs{idxGray}.sys, VAL, R0, M_AB, W_used, W_pred, ...
+                        Hs, hs, kset, tauv, rord);
+                
+                    ROC = roc_from_decisions(safe_true, safe_alg_tau);
+                
+                    % (logging stays the same)
+                    i0 = 1;
+                    row.sfty_tp_ddra = ROC.ddra.TP(i0); row.sfty_fp_ddra = ROC.ddra.FP(i0);
+                    row.sfty_tn_ddra = ROC.ddra.TN(i0); row.sfty_fn_ddra = ROC.ddra.FN(i0);
+                    row.sfty_tp_gray = ROC.gray.TP(i0); row.sfty_fp_gray = ROC.gray.FP(i0);
+                    row.sfty_tn_gray = ROC.gray.TN(i0); row.sfty_fn_gray = ROC.gray.FN(i0);
+                    row.roc_auc_ddra = ROC.ddra.AUC;
+                    row.roc_auc_gray = ROC.gray.AUC;
+                
+                    if exist('artifact','var')
+                        artifact.metrics.safety = struct( ...
+                            'tau', tauv, ...
+                            'safe_true', safe_true, ...
+                            'dec_ddra', safe_alg_tau.ddra, ...
+                            'dec_gray', safe_alg_tau.gray, ...
+                            'roc_ddra', ROC.ddra, ...
+                            'roc_gray', ROC.gray);
+                        sweepio_save_artifact(IO, row_index, artifact);
+                    end
+                end
+
 
     
                 % ---- Gray validation on EXACT same points (contains_interval metric)
@@ -326,69 +414,78 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % ---- DDRA inference (stored or streaming) on SAME validation points
-                % START PATCH
-                if LM.store_ddra_sets
-                    t2 = tic;
-                
-                    % same reduction policy as streaming
-                    ordCap = getfielddef(getfielddef(C,'lowmem',struct()), 'zonotopeOrder_cap', 100);
-                    Kred   = max(1, min(100, round(ordCap)));
-                
-                    nkv        = C.shared.n_k_val;
-                    m          = size(sys_true_dt.D,2);
-                    Bv         = numel(VAL.x0);
-                    wid_sums   = zeros(nkv,1);
-                    wid_counts = zeros(nkv,1);
-                
-                    % containment counters (exactly like streaming)
-                    num_in = 0; num_all = 0; tol = getfielddef(cfg.metrics,'tol',1e-6);
-                
-                    % PRE-update loop mirroring streaming
-                    for b = 1:Bv
-                        Xk = reduce(VAL.R0 + VAL.x0{b}, 'girard', Kred);  % PRE-update X_0
-                        Uk = VAL.u{b};                                    % (n_k × m)
-                        Yb = VAL.y{b};                                    % (n_k × ny)
-                
-                        for ps = 1:nkv
-                            Xk   = reduce(Xk, 'girard', Kred);
-                            uk   = Uk(ps,:).';
-                            U_pt = zonotope(uk);
-                
-                            % PRE-update output at time k INCLUDING feedthrough
-                            Yset = sys_true_dt.C * Xk + sys_true_dt.D * uk;
-                
-                            % widths (SUM across outputs; canonicalize later)
-                            Iv   = interval(Yset);
-                            lo   = try_get(@() infimum(Iv), @() Iv.inf);
-                            hi   = try_get(@() supremum(Iv), @() Iv.sup);
-                            wvec = max(hi - lo, 0);
-                            wid_sums(ps)   = wid_sums(ps)   + sum(double(wvec), 'omitnan');
-                            wid_counts(ps) = wid_counts(ps) + 1;
-                
-                            % containment in interval hull of Yset
-                            y_meas = Yb(ps,:).';
-                            if contains_interval(y_meas, Yset, tol), num_in = num_in + 1; end
-                            num_all = num_all + 1;
-                
-                            % POST-update propagation
-                            Xk = M_AB * cartProd(Xk, U_pt) + W_used;
+                if variant == "std"
+                    % START PATCH
+                    if LM.store_ddra_sets
+                        t2 = tic;
+                    
+                        % same reduction policy as streaming
+                        ordCap = getfielddef(getfielddef(C,'lowmem',struct()), 'zonotopeOrder_cap', 100);
+                        Kred   = max(1, min(100, round(ordCap)));
+                    
+                        nkv        = C.shared.n_k_val;
+                        m          = size(sys_true_dt.D,2);
+                        Bv         = numel(VAL.x0);
+                        wid_sums   = zeros(nkv,1);
+                        wid_counts = zeros(nkv,1);
+                    
+                        % containment counters (exactly like streaming)
+                        num_in = 0; num_all = 0; tol = getfielddef(cfg.metrics,'tol',1e-6);
+                    
+                        % PRE-update loop mirroring streaming
+                        for b = 1:Bv
+                            Xk = reduce(VAL.R0 + VAL.x0{b}, 'girard', Kred);  % PRE-update X_0
+                            Uk = VAL.u{b};                                    % (n_k × m)
+                            Yb = VAL.y{b};                                    % (n_k × ny)
+                    
+                            for ps = 1:nkv
+                                Xk   = reduce(Xk, 'girard', Kred);
+                                uk   = Uk(ps,:).';
+                                U_pt = zonotope(uk);
+                    
+                                % PRE-update output at time k INCLUDING feedthrough
+                                Yset = sys_true_dt.C * Xk + sys_true_dt.D * uk;
+                    
+                                % widths (SUM across outputs; canonicalize later)
+                                Iv   = interval(Yset);
+                                lo   = try_get(@() infimum(Iv), @() Iv.inf);
+                                hi   = try_get(@() supremum(Iv), @() Iv.sup);
+                                wvec = max(hi - lo, 0);
+                                wid_sums(ps)   = wid_sums(ps)   + sum(double(wvec), 'omitnan');
+                                wid_counts(ps) = wid_counts(ps) + 1;
+                    
+                                % containment in interval hull of Yset
+                                y_meas = Yb(ps,:).';
+                                if contains_interval(y_meas, Yset, tol), num_in = num_in + 1; end
+                                num_all = num_all + 1;
+                    
+                                % POST-update propagation
+                                Xk = M_AB * cartProd(Xk, U_pt) + W_used;
+                            end
                         end
+                    
+                        Tinfer = toc(t2);
+                    
+                        % average across blocks; canonical report = MEAN across outputs
+                        wid_ddra_k_raw = wid_sums ./ max(1, wid_counts);
+                        [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k_raw, size(sys_true_dt.C,1), "mean");
+                        sizeI_ddra_k = wid_ddra_k;
+                    
+                        cval_ddra = (num_all>0) * (100 * num_in / max(1,num_all));
+                    else
+                        t2 = tic;
+                        [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming( ...
+                            sys_ddra, R0, [], W_used, M_AB, C, VAL);
+                        Tinfer = toc(t2);
+                        [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k, size(sys_true_dt.C,1), "mean");
+                        sizeI_ddra_k = wid_ddra_k;
                     end
-                
-                    Tinfer = toc(t2);
-                
-                    % average across blocks; canonical report = MEAN across outputs
-                    wid_ddra_k_raw = wid_sums ./ max(1, wid_counts);
-                    [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k_raw, size(sys_true_dt.C,1), "mean");
-                    sizeI_ddra_k = wid_ddra_k;
-                
-                    cval_ddra = (num_all>0) * (100 * num_in / max(1,num_all));
                 else
+                    % measurement-noise-aware
                     t2 = tic;
-                    [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming( ...
-                        sys_ddra, R0, [], W_used, M_AB, C, VAL);
+                    [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming_meas( ...
+                        sys_true_dt, R0, [], W_eff, ABc, AV_one, V_meas, C, VAL);
                     Tinfer = toc(t2);
-                    [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k, size(sys_true_dt.C,1), "mean");
                     sizeI_ddra_k = wid_ddra_k;
                 end
 
@@ -564,8 +661,26 @@ function SUMMARY = run_sweeps(cfg, grid)
                     artifact.W_eff    = W_used;                    % actually used in inference
                     artifact.M_AB     = M_AB;
                     artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
-                      'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
-                      'n_k', C.shared.n_k, 'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2);
+                     'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
+                     'n_k', C.shared.n_k, 'pe', pe, 'save_tag', cfg.io.save_tag, 'schema', 2);
+
+                    % artifact = struct();
+                    % artifact.sys_gray = configs{idxGray}.sys;
+                    % artifact.sys_ddra = sys_true_dt;
+                    % artifact.VAL      = VAL;
+                    % artifact.W_eff    = W_used;
+                    % artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
+                    %   'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
+                    %   'n_k', C.shared.n_k, 'pe', pe, 'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
+                    % 
+                    % if variant == "standard"
+                    %     artifact.M_AB = M_AB;
+                    % else
+                    %     artifact.AB_meas_center = ABc;
+                    %     artifact.AV_oneterm     = AV_one;
+                    %     artifact.V_meas         = V_meas;
+                    % end
+
                     artifact.metrics.sizeI_gray_k = wid_gray_k;
 
                     if exist('sizeI_ddra_k','var'), artifact.metrics.sizeI_ddra_k = sizeI_ddra_k; end

@@ -41,7 +41,7 @@ rng(1,'twister');
 
 % ---------- Minimal cfg ----------
 cfg = struct();
-cfg.io = struct('save_tag', 'kMSD_sample_size_sweep');
+cfg.io = struct('save_tag', 'kMSD_sample_size_trajlength_sweep');
 
 % System & shared options
 cfg.shared = struct();
@@ -77,6 +77,13 @@ cfg.ddra.allow_ridge   = true;   % if false and rank-deficient -> skip point
 cfg.ddra.lambda        = 1e-8;    % ridge lambda when allowed
 cfg.ddra.ridge_gamma   = 1.0;     % scale for added uncertainty
 cfg.ddra.ridge_policy  = "MAB";   % "MAB" (add generator to M_AB) or "W" (inflate W)
+% --- choose which DDRA variant to run ---
+cfg.ddra.variant = "std";      % "std" (standard) | "meas" (measurement-noise-aware)
+
+% (optional) inject state measurement noise during TRAIN/VAL generation
+cfg.data.train.meas = struct('enable', true, 'gen_scale', 0.01);  % or provide V directly
+cfg.data.val.meas   = struct('enable', true, 'gen_scale', 0.01);  % symmetric VAL
+
 
 % Gray methods (keep simple/fast)
 cfg.gray = struct();
@@ -93,16 +100,24 @@ cfg.metrics.enhanced = true; % computes a wider range of evaluation metrics
 %% TODO - wire as a bool for the extended plots below
 cfg.metrics.directional = struct('enable', true, 'Nd', 64, 'seed', 12345);
 
+% Optional safety verification task to measure conservatism
+cfg.metrics.safety = struct( ...
+  'enable', false, ...
+  'H', ones(2,1), ...          % (#ineq x ny)
+  'h', 10*ones(2,1), ...          % (#ineq x 1)
+  'k_set', [], ...     % default = 1:n_k_val
+  'mode', 'per_block', ... % or 'per_step'
+  'tau_sweep', linspace(0, 0.2, 21), ... % spec tightening in output units
+  'reach_reduce', 80 ... % optional zonotope order for true/gray reach during safety eval
+);
 
 % ---------- Sweep grid ----------
 sweep_grid = struct();
 sweep_grid.D_list       = 2;
 sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
-sweep_grid.n_m_list = 2:2:20;
-sweep_grid.n_m_list = 2;
+sweep_grid.n_m_list = 10;
 sweep_grid.n_s_list = 4;
-sweep_grid.n_k_list = 4:1:10;
-%sweep_grid.n_k_list = 20;
+sweep_grid.n_k_list = 4:4:100;
 sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles
@@ -110,7 +125,7 @@ cfg.lowmem = struct();
 cfg.lowmem.gray_check_contain = true;   % don’t do expensive Gray containment
 cfg.lowmem.store_ddra_sets    = false;   % don’t keep DDRA sets; compute metrics on the fly
 cfg.lowmem.append_csv         = true;    % stream CSV row-by-row; don’t keep a giant table
-cfg.lowmem.zonotopeOrder_cap  = 50;      % optional: lower order to shrink sets in memory
+cfg.lowmem.zonotopeOrder_cap  = 25;      % optional: lower order to shrink sets in memory
 
 % --- plotting mode + knobs
 cfg.io.plot_mode     = "offline";   % "online" | "offline" | "both"
@@ -126,6 +141,13 @@ cfg.allow_parallel = false;  % keep serial
 
 cfg.shared.pe_min_policy = 'none';   % honor the L's in PE_orders exactly
 cfg.shared.pe_verbose    = true;     % (optional) show requested->effective L
+
+cfg.data = struct();
+cfg.data.inject_proc_train = true;      % add process noise during TRAIN sims
+cfg.data.inject_proc_val   = true;      % add process noise during VAL sims
+cfg.data.proc_W_scale      = 1.0;       % scale *relative to W_used* (or give explicit set)
+cfg.data.inject_meas_noise = false;     % optional: add measurement noise V
+cfg.data.V_meas            = [];        % if [], no meas noise; else zonotope(cV, GV)
 
 %% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
@@ -395,5 +417,29 @@ function p = find_artifact_by_row(artifact_dir, rownum)
     if p=="" && ~isempty(L)
         % Fallback: first .mat (last resort)
         p = string(fullfile(L(1).folder, L(1).name));
+    end
+end
+
+% ---------- ROC (if safety enabled) ----------
+if isfield(cfg,'metrics') && isfield(cfg.metrics,'safety') && cfg.metrics.safety.enable
+    % Load any artifact for picked row, reusing previous 'row_pick' logic
+    art_path = find_artifact_by_row(fullfile(results_dir,'artifacts'), row_pick);
+    if strlength(art_path)>0
+        A = load(art_path);
+        if isfield(A,'metrics') && isfield(A.metrics,'safety')
+            SFT = A.metrics.safety;
+            figure('Color','w','Name','ROC – Safety certification');
+            hold on; grid on;
+            [FPRd,TPRd] = deal(SFT.roc_ddra.FPR, SFT.roc_ddra.TPR);
+            [FPRg,TPRg] = deal(SFT.roc_gray.FPR, SFT.roc_gray.TPR);
+            plot(FPRd, TPRd, '-o', 'DisplayName', sprintf('DDRA (AUC=%.3f)', SFT.roc_ddra.AUC),'LineWidth',1.6);
+            plot(FPRg, TPRg, '-s', 'DisplayName', sprintf('Gray (AUC=%.3f)', SFT.roc_gray.AUC),'LineWidth',1.6);
+            plot([0 1],[0 1],'k--','DisplayName','chance');
+            xlabel('FPR'); ylabel('TPR'); legend('Location','southeast');
+            title(sprintf('%s — ROC over \\tau (spec tightening)', hdr));
+
+            save_plot(gcf, plots_dir, sprintf('roc_%s_%s', var_axis, rcsi_lbl), ...
+                'Formats', {'png','pdf'}, 'Resolution', 200);
+        end
     end
 end

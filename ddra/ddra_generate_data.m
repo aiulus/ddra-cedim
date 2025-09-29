@@ -28,7 +28,6 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_
         sys_sim = [];   % no simulator available -> legacy/manual path
     end
 
-
     % --- Disturbance set W: push forward input uncertainty through B  (W = B*U)
     if resolve_use_noise(C.shared)
         G_U = generators(U);                 % (nu × r)
@@ -38,7 +37,6 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_
     else
         W   = zonotope(zeros(nx,1));
     end
-
 
     % ------------------ PE nominal inputs (per trajectory m) ---------------
     U_nom_all = cell(1, n_m);
