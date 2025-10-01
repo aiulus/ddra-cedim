@@ -15,8 +15,22 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     addParameter(p,'externalTS_val',[]);  
     parse(p,varargin{:});
     TS_train_ext = p.Results.externalTS_train;
+    TS_val = p.Results.externalTS_val; 
     W_override   = p.Results.overrideW;
     optTS_in     = p.Results.options_testS;
+
+    % ---- warm-start cache (function-persistent) ----
+    persistent P0CACHE_MAP
+    if isempty(P0CACHE_MAP)
+        P0CACHE_MAP = containers.Map('KeyType','char','ValueType','any');
+    end
+
+    % helper to build a safe key
+    dynp = -1;
+    if isfield(C,'shared') && isfield(C.shared,'dyn_p') && ~isempty(C.shared.dyn_p)
+        dynp = C.shared.dyn_p;
+    end
+    mkKey = @(nm,ns,alpha) sprintf('D=%g|nm=%d|ns=%d|alpha=%.6f', dynp, nm, ns, alpha);
 
     % ---- build/choose test-suite options (use same PE as DDRA) ----
     optTS_auto = ts_options_from_pe(C, pe, sys_cora);
@@ -38,7 +52,7 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
                            'check_contain', C.lowmem.gray_check_contain, ...
                            'plot_settings', struct('k_plot', []));   % << key
 
-        if ~isa(W_override, 'emptyset'), conf_opts.W = W_override; end
+        if ~isempty(W_override), conf_opts.W = W_override; end
         lookup = struct('sys',sys_cora,'dyn',C.shared.dyn,'R0',R0,'U',U, ...
                         'n_m',C.shared.n_m,'n_s',C.shared.n_s,'n_k',C.shared.n_k, ...
                         'n_m_val',C.shared.n_m_val,'n_s_val',C.shared.n_s_val,'n_k_val',C.shared.n_k_val, ...
@@ -82,17 +96,17 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
             C.shared.n_k, C.shared.n_m, C.shared.n_s, optTS);
     end
     % === PACK FOR CORA gray (linearSysDT expects one testCase with n_m*n_s samples) ===
-    if isa(sys_cora,'linearSysDT')
-        S = params_id_init.testSuite;
-        if iscell(S) && numel(S) > 1 && size(S{1}.u,3) <= 1
-            params_id_init.testSuite = pack_for_gray(S);
-            % (optional sanity)
-            tc = params_id_init.testSuite{1};
-            fprintf('GRAY tc: y %s, u %s, x0 %s\n', ...
-                mat2str(size(tc.y)), mat2str(size(tc.u)), mat2str(size(tc.initialState)));
-            % Expect: y [n_k q n_m*n_s], u [n_k p n_m*n_s], x0 [nx 1 n_m*n_s]
-        end
-    end
+    % if isa(sys_cora,'linearSysDT')
+    %     S = params_id_init.testSuite;
+    %     if iscell(S) && numel(S) > 1 && size(S{1}.u,3) <= 1
+    %         params_id_init.testSuite = pack_for_gray(S);
+    %         % (optional sanity)
+    %         tc = params_id_init.testSuite{1};
+    %         fprintf('GRAY tc: y %s, u %s, x0 %s\n', ...
+    %             mat2str(size(tc.y)), mat2str(size(tc.u)), mat2str(size(tc.initialState)));
+    %         % Expect: y [n_k q n_m*n_s], u [n_k p n_m*n_s], x0 [nx 1 n_m*n_s]
+    %     end
+    % end
 
     % ---- conformance options ----
     options      = C.shared.options_reach;
@@ -117,40 +131,58 @@ function configs = gray_identify(sys_cora, R0, U, C, pe, varargin)
     %options.cs.p_min = -2*ones(numel(options.cs.p0),1);
     %options.cs.p_max =  2*ones(numel(options.cs.p0),1);
 
+    % ---- identify via per-block selection ----
+    type   = C.gray.methodsGray(1);
+    S_full = params_id_init.testSuite;   % cell of testCase (unpacked)
+    
+    best = inf; best_cfg = []; best_params = [];
+    fprintf('[gray_identify] per-seed mode: %d seeds; VAL provided = %d\n', numel(S_full), ~isempty(TS_val));
+    
+    for b = 1:numel(S_full)
+        params_b = params_id_init;
+        params_b.testSuite = {S_full{b}};    % decouple to a single block
 
-    % ---- identify (first gray method) ----
-    type = C.gray.methodsGray(1);
-    [params_hat, results] = conform(sys_cora, params_id_init, options, type);
-
-    if ~isa(W_override, 'emptySet') && results.sys.nrOfDisturbances==0
-        warning('overrideW provided but model has no disturbances; ignoring.');
-    end
-
-    % ---- apply overrideW to the returned config (if any) ----
-    if ~isempty(W_override) && results.sys.nrOfDisturbances > 0
-        try
-            d_in = size(center(W_override),1);
-            nw   = results.sys.nrOfDisturbances;
-            if d_in == nw
-                % Already in disturbance space -> use as-is
-                params_hat.W = W_override;
-            elseif ~isempty(results.sys.E) && size(results.sys.E,1) == d_in
-                % State-space W -> conservative preimage to disturbance space
-                if exist('normalizeWForGray','file') == 2
-                    params_hat.W = normalizeWForGray(results.sys, W_override);
-                else
-                    % very conservative fallback if helper missing
-                    params_hat.W = zonotope(zeros(nw,1));
-                end
-            else
-                % Incompatible dims -> safest fallback
-                params_hat.W = zonotope(zeros(nw,1));
-            end
-        catch
-            % Any failure -> zero-disturbance fallback
-            params_hat.W = zonotope(zeros(results.sys.nrOfDisturbances,1));
+        % local copy of options
+        options_b = options;
+    
+        % warm-start from cache
+        key = mkKey(C.shared.n_m, C.shared.n_s, C.ddra.alpha_w);
+        if isKey(P0CACHE_MAP, key)
+            options_b.cs.p0 = P0CACHE_MAP(key);
+        end
+    
+        % identify on this block only
+        [params_hat_b, results_b] = conform(sys_cora, params_b, options_b, type);
+    
+        % store warm-start for next seed / next run
+        if isfield(results_b,'p')
+            P0CACHE_MAP(key) = results_b.p;
+        end
+    
+        % score on VAL if given; otherwise on this block
+        if ~isempty(TS_val)
+            size_b = gray_infer_size_on_VAL(results_b.sys, TS_val, C, params_hat_b, ...
+                                            'overrideW', W_override, 'width_agg','sum');
+        else
+            size_b = gray_infer_size_on_VAL(results_b.sys, {S_full{b}}, C, params_hat_b, ...
+                                            'overrideW', W_override, 'width_agg','sum');
+        end
+    
+        if size_b < best
+            best = size_b;  best_cfg = results_b;  best_params = params_hat_b;
         end
     end
+    
+    % fallback if nothing updated (paranoid safety)
+    if isempty(best_cfg) || isempty(best_params)
+        best_cfg    = results_b;   % last attempt
+        best_params = params_hat_b;
+    end
+    
+    % use the best seed downstream
+    results    = best_cfg;
+    params_hat = best_params;
+
 
 
     % ---- pack configs ----

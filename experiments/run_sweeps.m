@@ -222,12 +222,25 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % ---- unified disturbance policy ----
-                % W_eff: from ddra_learn_Mab (may include ridge inflation)
                 if resolve_use_noise(C.shared)
-                    W_used = W_eff;    % state-dim nx
+                    % baseline from learner
+                    W_used = W_eff;
+                    % enforce alpha_W scale if the learner didn't
+                    g_now  = zono_gnorm(W_used);
+                    if ~isnan(g_now) && g_now > 0
+                        W_used = zono_scale(W_used, C.ddra.alpha_w / g_now);
+                    else
+                        % if no usable scale, default to raw alpha_W
+                        W_used = zono_scale(W_used, C.ddra.alpha_w);
+                    end
                 else
                     W_used = zonotope(zeros(size(center(W_eff),1),1));
                 end
+                
+                % (diagnostics into the row/CSV so you can confirm scaling worked)
+                row.w_eff_gmean  = zono_gnorm(W_eff);
+                row.w_used_gmean = zono_gnorm(W_used);
+
                 
 
                 % ---- Build W_for_gray only if disturbance channels exist ----
@@ -245,7 +258,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 Tlearn_g = toc(t3);
                 
                 idxGray = pick_gray_config(configs, C);
-
+                  
                 % ---- Set W_pred only if identified Gray sys has disturbance channels ----
                 % W_pred = build_W_pred(configs{idxGray}.sys, U, W_used);
                 W_pred = build_W_pred(configs{idxGray}.sys, C, W_used);  % map state-space W_used -> Gray disturbance space
@@ -271,30 +284,9 @@ function SUMMARY = run_sweeps(cfg, grid)
                     must( isequal(size(VAL.y{b}), [C_val.shared.n_k, size(sys_cora.C,1)]), 'VAL.y block shape mismatch');
                 end
                 
-                % W mapping sanity (only if Gray has disturbance channels)
-                if isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances > 0
-                    Wpred = build_W_pred(sys_cora, C, W_used);  % may come back []
-                    if isempty(Wpred)
-                        % Fail-safe: give Gray a zero-disturbance set of the right size.
-                        warning('W_pred was empty; substituting zero zonotope for Gray disturbances.');
-                        Wpred = zonotope(zeros(sys_cora.nrOfDisturbances,1));
-                    end
-                end
-
                 pmode = lower(string(getfielddef(cfg.io,'plot_mode','offline')));
                 % === Unified artifact save (after configs, VAL, M_AB, W_eff exist) ===
                 sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
-                
-                % artifact = struct();
-                % artifact.sys_gray = configs{idxGray}.sys;
-                % artifact.sys_ddra = sys_true_dt;
-                % artifact.VAL      = VAL;                % exact VAL used
-                % artifact.W_eff    = W_used;             % actually used in inference
-                % artifact.M_AB     = M_AB;
-                % artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
-                %     'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, ...
-                %     'n_s', C.shared.n_s, 'n_k', C.shared.n_k, 'pe', pe, ...
-                %     'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
 
                 artifact = struct();
                 artifact.sys_gray = configs{idxGray}.sys;
@@ -814,6 +806,28 @@ function SUMMARY = run_sweeps(cfg, grid)
     % ------------------------- Save & return ------------------------------
     SUMMARY = sweepio_finalize(IO);
    
+end
+
+% ---------- Helpers ----------
+function s = zono_gnorm(Z)
+% mean 2-norm of generators (a simple, monotone width proxy)
+try
+    G = generators(Z);
+    s = mean(vecnorm(double(G),2,1), 'omitnan');
+    if ~isfinite(s), s = NaN; end
+catch
+    s = NaN;
+end
+end
+
+function Z2 = zono_scale(Z, fac)
+% scale both center and generators by fac
+try
+    c = double(center(Z)); G = double(generators(Z));
+    Z2 = zonotope(c*fac, G*fac);
+catch
+    Z2 = Z; % safe fallback
+end
 end
 
 

@@ -33,8 +33,8 @@ cfg.shared.cs_base = struct('robustnessMargin',1e-9,'verbose',false, ...
 cfg.shared.n_m = 10;  
 cfg.shared.n_s = 2;  
 cfg.shared.n_k = 10;
-cfg.shared.n_m_val = 2;
-cfg.shared.n_s_val = cfg.shared.n_s;
+cfg.shared.n_m_val = 10;
+cfg.shared.n_s_val = 2;
 cfg.shared.n_k_val = cfg.shared.n_k;
 
 % Unified noise policy
@@ -54,7 +54,7 @@ cfg.gray = struct('methodsGray', ["graySeq"]);
 cfg.lowmem = struct('gray_check_contain', true, ...
                     'store_ddra_sets',   false, ...
                     'append_csv',        true, ...
-                    'zonotopeOrder_cap', 50);
+                    'zonotopeOrder_cap', 25);
 
 % Metrics
 cfg.metrics = struct();
