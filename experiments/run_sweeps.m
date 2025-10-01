@@ -248,13 +248,12 @@ function SUMMARY = run_sweeps(cfg, grid)
 
                 % ---- Set W_pred only if identified Gray sys has disturbance channels ----
                 % W_pred = build_W_pred(configs{idxGray}.sys, U, W_used);
-                W_pred = W_used;
-                if ~isfield(configs{idxGray},'params') || isempty(configs{idxGray}.params)
-                    configs{idxGray}.params = struct();
+                W_pred = build_W_pred(configs{idxGray}.sys, C, W_used);  % map state-space W_used -> Gray disturbance space
+                if isempty(W_pred)
+                    W_pred = zonotope(zeros(configs{idxGray}.sys.nrOfDisturbances,1)); % safe fallback
                 end
-                if ~isempty(W_pred)
-                    configs{idxGray}.params.W = W_pred;
-                end
+                configs{idxGray}.params.W = W_pred;
+
 
                 VAL = pack_VAL_from_TS(TS_val);
 
@@ -502,6 +501,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 if getfielddef(cfg.metrics,'enhanced', true)
                     % GRAY per-step metrics from VAL only
                     try
+                        %% ACHTUNG - PLACEHOLDER - HASN'T BEEN IMPLEMENTED YET
                         [~, cov_gray_k, fv_gray, ~] = perstep_gray_metrics(configs{idxGray}.sys, VAL, W_pred, struct('zonotopeOrder',60));
                     catch
                         cov_gray_k = []; fv_gray = []; 
@@ -509,6 +509,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                     % DDRA per-step metrics from VAL only (uses M_AB; fast)
                     try
+                        %% ACHTUNG - PLACEHOLDER - HASN'T BEEN IMPLEMENTED YET
                         [~, cov_ddra_k, fv_ddra, ~] = perstep_ddra_metrics(sys_true_dt, VAL, M_AB, W_used, 60);
                     catch
                         cov_ddra_k = []; fv_ddra = [];
@@ -586,7 +587,17 @@ function SUMMARY = run_sweeps(cfg, grid)
                                 support_zono_vec(-Ddirs, center(Yd_k), generators(Yd_k)) );
                 
                             % Advance PRE→POST for next step
-                            Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
+                            if variant == "std"
+                                Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
+                            else
+                                % meas-noise-aware propagation: add V_meas to the regressor for k>1
+                                X_for_AB = Xk_rep;
+                                if k > 1 && exist('V_meas','var') && ~isempty(generators(V_meas))
+                                    X_for_AB = Xk_rep + V_meas;
+                                end
+                                Xk_rep = ABc * cartProd(X_for_AB, zonotope(uk)) + AV_one + W_used;
+                            end
+
                         end
                     end
                 

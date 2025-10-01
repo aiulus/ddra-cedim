@@ -1,10 +1,10 @@
-%% trajlength_sweep_batch.m
 % Headless multi-run driver: run trajectory-length sweep NREP times,
 % aggregate CSVs, then (optionally) plot mean±std. Plotting is inside try/catch.
 
 clear; clc;
 
-NREP = 5;                           % number of repetitions
+NREP = 5; 
+%NREP = 1; 
 base_tag = 'kMSD_sample_size_trajlength_sweep';
 do_plots = true;                     % aggregate plots at the end (safe-guarded)
 
@@ -77,10 +77,16 @@ rcsi_lbl = rcsi_label_from_cfg(cfg);
 sweep_grid = struct();
 sweep_grid.D_list        = 2;
 sweep_grid.alpha_w_list  = cfg.ddra.alpha_w;
-sweep_grid.n_m_list      = 10;          % fixed
-sweep_grid.n_s_list      = 4;           % fixed
-sweep_grid.n_k_list      = 4:2:20;     % varies
+sweep_grid.n_m_list      = 10;          
+sweep_grid.n_s_list      = 2;           
+sweep_grid.n_k_list      = 4:2:20;     
 sweep_grid.pe_list       = { struct('mode','randn','order',4,'strength',1,'deterministic',true) };
+
+%sweep_grid.D_list        = 2;
+%sweep_grid.alpha_w_list  = cfg.ddra.alpha_w;
+%sweep_grid.n_m_list      = 2;          
+%sweep_grid.n_s_list      = 1;           
+%sweep_grid.n_k_list      = 2:1:4;     
 
 %% ----- Preflight: fill safety H/h to match ny if enabled -----
 try
@@ -179,6 +185,10 @@ for v = numVars
     end
 end
 
+% --- Legend strings + header (exclude the swept axis n_k) ---
+[ddra_lbl, gray_lbl, hdr] = legend_bits_for_batch(cfg, sweep_grid, 'n_k', rcsi_lbl);
+colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
+
 % Write aggregated CSV before any plotting 
 agg_dir = fullfile(cfg.io.base_dir, 'experiments','results','data', ...
                    sprintf('%s_%s_agg', base_tag, rcsi_lbl));
@@ -196,45 +206,50 @@ try
     M = @(name) AGG.(name + "_mean");
     S = @(name) AGG.(name + "_std");
 
-    % a) Runtime panels
-    figure('Color','w','Name','Runtime (mean \pm std)'); tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+    % Runtime panels
+    figure('Color','w','Name','Runtime (mean \pm std)');
+    tiledlayout(2,2,'Padding','compact','TileSpacing','compact');
+    
     nexttile; hold on; grid on;
-    plot(x, M("t_ddra_total"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("t_gray_total"), '-s','LineWidth',1.6, 'DisplayName','Gray');
-    xlabel('n_k'); ylabel('seconds'); title('Total'); legend('Location','best');
-
+    plot(x, M("t_ddra_total"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("t_gray_total"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
+    xlabel('n_k'); ylabel('seconds'); title(sprintf('%s — Total runtime vs n_k', hdr)); legend('Location','best');
+    
     nexttile; hold on; grid on;
-    plot(x, M("t_ddra_learn"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("t_gray_learn"), '-s','LineWidth',1.6, 'DisplayName','Gray');
-    xlabel('n_k'); ylabel('seconds'); title('Learning'); legend('Location','best');
-
+    plot(x, M("t_ddra_learn"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("t_gray_learn"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
+    xlabel('n_k'); ylabel('seconds'); title(sprintf('%s — Learning runtime', hdr)); legend('Location','best');
+    
     nexttile; hold on; grid on;
-    plot(x, M("t_ddra_check"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("t_gray_val"),   '-s','LineWidth',1.6, 'DisplayName','Gray');
-    xlabel('n_k'); ylabel('seconds'); title('Validation/Check'); legend('Location','best');
-
+    plot(x, M("t_ddra_check"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("t_gray_val"),   '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
+    xlabel('n_k'); ylabel('seconds'); title(sprintf('%s — Validation/Check', hdr)); legend('Location','best');
+    
     nexttile; hold on; grid on;
-    plot(x, M("t_ddra_infer"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("t_gray_infer"), '-s','LineWidth',1.6, 'DisplayName','Gray');
-    xlabel('n_k'); ylabel('seconds'); title('Inference'); legend('Location','best');
-
-    % b) Fidelity / Conservatism
-    figure('Color','w','Name','Fidelity & Conservatism (mean \pm std)'); tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
-    nexttile; hold on; grid on;
-    plot(x, M("cval_ddra"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("cval_gray"), '-s','LineWidth',1.6, 'DisplayName','Gray');
-    xlabel('n_k'); ylabel('containment (%)'); title('Fidelity'); legend('Location','best');
-
-    nexttile; hold on; grid on;
-    plot(x, M("sizeI_ddra"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("sizeI_gray"), '-s','LineWidth',1.6, 'DisplayName','Gray');
-    xlabel('n_k'); ylabel('\Sigma interval widths'); title('Conservatism'); legend('Location','best');
-
-    % Save figures
+    plot(x, M("t_ddra_infer"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("t_gray_infer"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
+    xlabel('n_k'); ylabel('seconds'); title(sprintf('%s — Inference', hdr)); legend('Location','best');
+    
+    % Save runtime panels (already suggested earlier)
     try
-        saveas(gcf, fullfile(agg_dir,'fidelity_conservatism_mean.png'));
-        exportgraphics(gcf, fullfile(agg_dir,'fidelity_conservatism_mean.pdf'),'ContentType','vector');
+        saveas(gcf, fullfile(agg_dir,'runtime_panels_mean.png'));
+        exportgraphics(gcf, fullfile(agg_dir,'runtime_panels_mean.pdf'),'ContentType','vector');
     catch, end
+    
+    % Fidelity / Conservatism
+    figure('Color','w','Name','Fidelity & Conservatism (mean \pm std)');
+    tiledlayout(1,2,'Padding','compact','TileSpacing','compact');
+    
+    nexttile; hold on; grid on;
+    plot(x, M("cval_ddra"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("cval_gray"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
+    xlabel('n_k'); ylabel('containment (%)'); title(sprintf('%s — Fidelity vs n_k', hdr)); legend('Location','best');
+    
+    nexttile; hold on; grid on;
+    plot(x, M("sizeI_ddra"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("sizeI_gray"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
+    xlabel('n_k'); ylabel('\Sigma interval widths'); title(sprintf('%s — Conservatism vs n_k', hdr)); legend('Location','best');
+
 
     fprintf('Aggregate plots saved under: %s\n', agg_dir);
 catch ME

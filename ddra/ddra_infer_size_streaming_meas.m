@@ -18,7 +18,7 @@ function [sizeI_ddra, cval_ddra, wid_k] = ddra_infer_size_streaming_meas(sys_tru
     tol = getfielddef(C.metrics,'tol', 1e-6);
 
     for b = 1:Bv
-        Xk = reduce(VAL.R0 + VAL.x0{b}, 'girard', Kred);   % PRE-update X_0
+        Xk = reduce(R0 + VAL.x0{b}, 'girard', Kred);   
         Uk = VAL.u{b};
         Yb = VAL.y{b};
 

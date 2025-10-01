@@ -30,7 +30,9 @@ cfg.shared.cs_base = struct('robustnessMargin',1e-9,'verbose',false, ...
                             'cost',"interval",'constraints',"half");
 
 % Data budgets (modest)
-cfg.shared.n_m = 30;  cfg.shared.n_s = 5;  cfg.shared.n_k = 6;
+cfg.shared.n_m = 10;  
+cfg.shared.n_s = 2;  
+cfg.shared.n_k = 10;
 cfg.shared.n_m_val = 2;
 cfg.shared.n_s_val = cfg.shared.n_s;
 cfg.shared.n_k_val = cfg.shared.n_k;
@@ -95,7 +97,7 @@ try
       end
   end
 catch ME
-  frpintf('Safety preflight skipped: %s', ME.message);
+  fpintf('Safety preflight skipped: %s', ME.message);
 end
 
 %% ----- Run NREP times (unique save_tag + RNG), keep per-run CSVs -----
@@ -168,6 +170,9 @@ for v = numVars
     end
 end
 
+[ddra_lbl, gray_lbl, hdr] = legend_bits_for_batch(cfg, sweep_grid, 'alpha_w', rcsi_lbl);
+colors = struct('ddra',[0.23 0.49 0.77],'gray',[0.85 0.33 0.10]);
+
 agg_dir = fullfile(cfg.io.base_dir, 'experiments','results','data', ...
                    sprintf('%s_%s_agg', base_tag, rcsi_lbl));
 if ~exist(agg_dir,'dir'), mkdir(agg_dir); end
@@ -180,26 +185,29 @@ if do_plots
 try
     x = AGG.alpha_w;
     M = @(name) AGG.(name + "_mean");
-    S = @(name) AGG.(name + "_std"); %#ok<NASGU>  % (std unused in lines; kept for extensions)
+    S = @(name) AGG.(name + "_std"); % (std unused in lines; kept for extensions)
 
     % Fidelity / Conservatism vs alpha_W
     figure('Color','w','Name','Fidelity & Conservatism (mean \pm std)'); 
     tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
-
-    nexttile; hold on; grid on; title('Fidelity vs \alpha_W');
-    plot(x, M("cval_ddra"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("cval_gray"), '-s','LineWidth',1.6, 'DisplayName','GraySeq');
+    
+    nexttile; hold on; grid on;
+    title(sprintf('%s — Fidelity vs \\alpha_W', hdr));
+    plot(x, M("cval_ddra"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("cval_gray"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
     xlabel('\alpha_W'); ylabel('Containment on validation (%)'); legend('Location','best');
-
-    nexttile; hold on; grid on; title('Conservatism proxy vs \alpha_W');
-    plot(x, M("sizeI_ddra"), '-o','LineWidth',1.6, 'DisplayName','DDRA');
-    plot(x, M("sizeI_gray"), '-s','LineWidth',1.6, 'DisplayName','GraySeq');
+    
+    nexttile; hold on; grid on;
+    title(sprintf('%s — Conservatism vs \\alpha_W', hdr));
+    plot(x, M("sizeI_ddra"), '-o','LineWidth',1.6,'Color',colors.ddra,'DisplayName',ddra_lbl);
+    plot(x, M("sizeI_gray"), '-s','LineWidth',1.6,'Color',colors.gray,'DisplayName',gray_lbl);
     xlabel('\alpha_W'); ylabel('\Sigma interval widths'); legend('Location','best');
-
+    
     try
         saveas(gcf, fullfile(agg_dir, 'fidcons_vs_alphaW_mean.png'));
         exportgraphics(gcf, fullfile(agg_dir, 'fidcons_vs_alphaW_mean.pdf'),'ContentType','vector');
     catch, end
+
 
     % Shape-aware (if present)
     hasDir = ismember("dir_eps_med_mean", string(AGG.Properties.VariableNames)) || ...

@@ -84,7 +84,6 @@ cfg.ddra.variant = "std";      % "std" (standard) | "meas" (measurement-noise-aw
 cfg.data.train.meas = struct('enable', true, 'gen_scale', 0.01);  % or provide V directly
 cfg.data.val.meas   = struct('enable', true, 'gen_scale', 0.01);  % symmetric VAL
 
-
 % Gray methods (keep simple/fast)
 cfg.gray = struct();
 cfg.gray.methodsGray = ["graySeq"];
@@ -118,6 +117,7 @@ sweep_grid.alpha_w_list = cfg.ddra.alpha_w;  % keep W fixed
 sweep_grid.n_m_list = 10;
 sweep_grid.n_s_list = 4;
 sweep_grid.n_k_list = 4:4:100;
+sweep_grid.n_k_list = 2:2:6;
 sweep_grid.pe_list = { struct('mode','randn','order', 4, 'strength',1,'deterministic',true) };
 
 % New: Memory efficiency toggles
@@ -142,12 +142,15 @@ cfg.allow_parallel = false;  % keep serial
 cfg.shared.pe_min_policy = 'none';   % honor the L's in PE_orders exactly
 cfg.shared.pe_verbose    = true;     % (optional) show requested->effective L
 
-cfg.data = struct();
-cfg.data.inject_proc_train = true;      % add process noise during TRAIN sims
-cfg.data.inject_proc_val   = true;      % add process noise during VAL sims
-cfg.data.proc_W_scale      = 1.0;       % scale *relative to W_used* (or give explicit set)
-cfg.data.inject_meas_noise = false;     % optional: add measurement noise V
-cfg.data.V_meas            = [];        % if [], no meas noise; else zonotope(cV, GV)
+cfg.data = struct( ...
+  'train', struct('meas', struct('enable', true, 'gen_scale', 0.01)), ...
+  'val',   struct('meas', struct('enable', true, 'gen_scale', 0.01)), ...
+  'inject_proc_train', true, ...
+  'inject_proc_val',   true, ...
+  'proc_W_scale',      1.0, ...
+  'inject_meas_noise', false, ...  % optional legacy switch; OK to keep
+  'V_meas',            []);        % optional explicit set
+
 
 %% ---------- Run ----------
 SUMMARY = run_sweeps(cfg, sweep_grid);
