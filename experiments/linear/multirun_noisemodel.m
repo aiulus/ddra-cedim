@@ -71,7 +71,7 @@ cfg.metrics.safety = struct('enable', false, 'H', [], 'h', [], ...
 cfg.io.base_dir    = fileparts(fileparts(mfilename('fullpath')));
 cfg.allow_parallel = false;
 
-% Sweep grid: vary additive process noise scale α_W
+% Sweep grid: vary additive process noise scale alpha_W
 sweep_grid = struct();
 sweep_grid.D_list        = 2;
 sweep_grid.alpha_w_list  = [0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 0.75, 1];
