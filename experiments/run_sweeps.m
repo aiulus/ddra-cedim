@@ -14,8 +14,30 @@ function SUMMARY = run_sweeps(cfg, grid)
     % -------- Sweep axes & base config -----------------------------------
     [axes, baseC] = init_sweep_axes(cfg, grid);
 
+    % x-dimension sweep
+    if isstruct(grid) && isfield(grid,'D_list') && ~isempty(grid.D_list)
+        axes.D = grid.D_list(:).';   % row vector, exactly as requested by the caller
+    end
+    fprintf('axes.D = %s\n', mat2str(axes.D));
+
     % DDRA variant selector: "std" (default) or "meas"
     variant = string(getfielddef(getfielddef(cfg,'ddra',struct()), 'variant', "std"));
+
+    % --- Measurement-noise experiment defaults (script-level control) ---
+    MEAS = getfielddef(getfielddef(cfg,'meas',struct()), 'enable', false);
+    
+    baseC.meas = struct();
+    baseC.meas.enable = MEAS;
+    
+    if isfield(cfg,'meas') && isstruct(cfg.meas)
+        baseC.meas.inject_on_train = getfielddef(cfg.meas,'inject_on_train', true);
+        baseC.meas.infer_on        = getfielddef(cfg.meas,'infer_on', false);
+        baseC.meas.alpha_infer     = getfielddef(cfg.meas,'alpha_infer', 0);
+    else
+        baseC.meas.inject_on_train = true;
+        baseC.meas.infer_on        = false;
+        baseC.meas.alpha_infer     = 0;
+    end
     
     % Precompute for in-memory mode only (IO helper will use this)
     Ntot = numel(axes.D) * numel(axes.alpha_w) * numel(axes.n_m) * ...
@@ -82,7 +104,21 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C.shared.n_m_val = max(2, min(n_m, getfielddef(baseC.shared, 'n_m_val', 2)));
                 C.shared.n_s_val = n_s;  C.shared.n_k_val = n_k;
                 C.ddra.alpha_w   = alpha_w;
-            
+
+                % --- ensure both common knobs are set for the builder ---
+                if C.shared.dyn == "k-Mass-SD"
+                    C.shared.dyn_p = D;     % many builders use this
+                    C.shared.D     = D;     % some builders use this instead
+                end
+                            
+                % Map sweep alpha_w -> measurement-noise (train) when MEAS enabled
+                C.meas = baseC.meas;
+                if C.meas.enable
+                    C.meas.alpha_train = alpha_w;   % << this is the radius of Z_w for TRAIN
+                else
+                    C.meas.alpha_train = 0;
+                end
+
                 % Make nominal PE input reproducible and L-dependent without freezing RNG
                 pe.deterministic = getfielddef(pe,'deterministic', true);
                 pe.seed_base = uint32(mod( double(row_seed) + 131*double(getfielddef(pe,'order',0)) + 977*double(ip), 2^31-1 ));
@@ -91,6 +127,14 @@ function SUMMARY = run_sweeps(cfg, grid)
     
                 % --- Build true systems ---
                 [sys_cora, sys_ddra, R0, U] = build_true_system(C);
+
+
+                % Debug: dimension check?
+                nx = size(sys_cora.A,1); nu = size(sys_cora.B,2); ny = size(sys_cora.C,1);
+                if isprop(sys_cora,'nrOfDims'), nr = sys_cora.nrOfDims; else, nr = NaN; end
+                fprintf('[row %d] D_req=%d -> nx=%d, ny=%d, nu=%d (nrOfDims=%g)\n', ...
+                        IO.rowi+1, D, nx, ny, nu, nr);
+
                 % Zero-centered copy for CORA (deviation only)
                 c0 = center(R0);
                 G0 = R0.G;               
@@ -153,6 +197,10 @@ function SUMMARY = run_sweeps(cfg, grid)
                 C_val.shared.n_m = C.shared.n_m_val;
                 C_val.shared.n_s = C.shared.n_s_val;
                 C_val.shared.n_k = C.shared.n_k_val;
+                % Validation: do not perturb the regressor (we control inference noise separately)
+                C_val.meas = C.meas;
+                C_val.meas.inject_on_train = false;   % << key
+
                 rng(row_seed+1,'twister');[~,~,~,~,~, DATASET_val] = ...
                         ddra_generate_data(C_val, sys_ddra, sys_cora.dt, R0, U, pe_eff, sys_cora);
                 TS_val   = testSuite_fromDDRA(sys_cora, R0, DATASET_val, C_val.shared.n_k, C_val.shared.n_m, C_val.shared.n_s);
@@ -222,30 +270,38 @@ function SUMMARY = run_sweeps(cfg, grid)
 
     
                 % ---- unified disturbance policy ----
+                % from ddra_learn_Mab (or base W if no ridge)
                 if resolve_use_noise(C.shared)
-                    % baseline from learner
-                    W_used = W_eff;
-                    % enforce alpha_W scale if the learner didn't
-                    g_now  = zono_gnorm(W_used);
-                    if ~isnan(g_now) && g_now > 0
-                        W_used = zono_scale(W_used, C.ddra.alpha_w / g_now);
-                    else
-                        % if no usable scale, default to raw alpha_W
-                        W_used = zono_scale(W_used, C.ddra.alpha_w);
-                    end
+                    W_ddra_used = W_eff;   
                 else
-                    W_used = zonotope(zeros(size(center(W_eff),1),1));
+                    W_ddra_used = zonotope(zeros(size(center(W_eff),1),1));
                 end
+
                 
                 % (diagnostics into the row/CSV so you can confirm scaling worked)
                 row.w_eff_gmean  = zono_gnorm(W_eff);
-                row.w_used_gmean = zono_gnorm(W_used);
+                row.W_ddra_used_gmean = zono_gnorm(W_ddra_used);
 
-                
-
-                % ---- Build W_for_gray only if disturbance channels exist ----
-                W_for_gray = build_W_for_gray(sys_cora, U, W_used);
-                
+                % ---- Gray W in state space (independent scale) ----
+                % ---- Gray disturbance (disable extra channel for measurement-noise experiments) ----
+                if getfielddef(C,'meas',struct('enable',false)).enable
+                    % Force zero disturbance for Gray to avoid the RCSI artifact
+                    if resolve_use_noise(C.shared) && isprop(sys_cora,'nrOfDisturbances') && sys_cora.nrOfDisturbances>0
+                        W_for_gray = zonotope(zeros(sys_cora.nrOfDisturbances,1));
+                    else
+                        W_for_gray = [];   % none
+                    end
+                else
+                    % (old behavior kept for non-measurement experiments)
+                    C.gray.alpha_w = alpha_w;
+                    nx = size(sys_cora.A,1);
+                    if resolve_use_noise(C.shared)
+                        W_gray_state = zonotope([zeros(nx,1), (C.gray.eta_w*C.gray.alpha_w)*eye(nx)]);
+                    else
+                        W_gray_state = zonotope(zeros(nx,1));
+                    end
+                    W_for_gray = build_W_for_gray(sys_cora, U, W_gray_state);
+                end                
             
                 % ================= GRAY =================
                 optTS = ts_options_from_pe(C, pe, sys_cora);
@@ -258,16 +314,23 @@ function SUMMARY = run_sweeps(cfg, grid)
                 Tlearn_g = toc(t3);
                 
                 idxGray = pick_gray_config(configs, C);
-                  
-                % ---- Set W_pred only if identified Gray sys has disturbance channels ----
-                % W_pred = build_W_pred(configs{idxGray}.sys, U, W_used);
-                W_pred = build_W_pred(configs{idxGray}.sys, C, W_used);  % map state-space W_used -> Gray disturbance space
-                if isempty(W_pred)
-                    W_pred = zonotope(zeros(configs{idxGray}.sys.nrOfDisturbances,1)); % safe fallback
+
+                if getfielddef(C,'meas',struct('enable',false)).enable
+                    % zero disturbance in prediction too
+                    if configs{idxGray}.sys.nrOfDisturbances > 0
+                        W_pred = zonotope(zeros(configs{idxGray}.sys.nrOfDisturbances,1));
+                    else
+                        W_pred = [];
+                    end
+                else
+                    W_pred = build_W_pred(configs{idxGray}.sys, C, W_gray_state);
+                    if isempty(W_pred)
+                        W_pred = zonotope(zeros(configs{idxGray}.sys.nrOfDisturbances,1));
+                    end
                 end
                 configs{idxGray}.params.W = W_pred;
 
-
+               
                 VAL = pack_VAL_from_TS(TS_val);
 
                 fprintf('VAL(flat) m*s=%d  nk=%d\n', numel(VAL.y), size(VAL.y{1},1));
@@ -292,7 +355,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 artifact.sys_gray = configs{idxGray}.sys;
                 artifact.sys_ddra = sys_true_dt;
                 artifact.VAL      = VAL;
-                artifact.W_eff    = W_used;
+                artifact.W_eff    = W_ddra_used;
                 artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
                   'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
                   'n_k', C.shared.n_k, 'pe', pe, 'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
@@ -318,7 +381,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                     sys_true_dt = normalize_to_linearSysDT(sys_ddra, sys_cora.dt);
                 
-                    W_plot = pick_W_for_plot(W_used, use_noise);
+                    W_plot = pick_W_for_plot(W_ddra_used, use_noise);
 
                     reach_dir = fullfile(plots_dir,'reach');
                     if ~exist(reach_dir,'dir'), mkdir(reach_dir); end
@@ -335,7 +398,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                         sys_true_dt, ...
                         configs{idxGray}.sys, ...
                         VAL, ...
-                        'W', pick_W_for_plot(W_used, use_noise), ...
+                        'W', pick_W_for_plot(W_ddra_used, use_noise), ...
                         'Dims', dims, ...
                         'ShowSamples', false, ...
                         'Save', savename_png, ...
@@ -354,7 +417,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     rord = getfielddef(SFT,'reach_reduce', 80);
 
                     [safe_true, safe_alg_tau] = eval_safety_labels( ...
-                        sys_true_dt, configs{idxGray}.sys, VAL, R0, M_AB, W_used, W_pred, ...
+                        sys_true_dt, configs{idxGray}.sys, VAL, R0, M_AB, W_ddra_used, W_pred, ...
                         Hs, hs, kset, tauv, rord);
                 
                     ROC = roc_from_decisions(safe_true, safe_alg_tau);
@@ -401,6 +464,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                                 'externalTS_train', TS_train, ...
                                 'externalTS_val',   TS_val,   ...
                                 'check_contain',    true,     ...
+                                'overrideW',        W_pred,   ...
                                 ps_args{:});
 
     
@@ -451,7 +515,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                                 num_all = num_all + 1;
                     
                                 % POST-update propagation
-                                Xk = M_AB * cartProd(Xk, U_pt) + W_used;
+                                Xk = M_AB * cartProd(Xk, U_pt) + W_ddra_used;
                             end
                         end
                     
@@ -466,16 +530,24 @@ function SUMMARY = run_sweeps(cfg, grid)
                     else
                         t2 = tic;
                         [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming( ...
-                            sys_ddra, R0, [], W_used, M_AB, C, VAL);
+                            sys_ddra, R0, [], W_ddra_used, M_AB, C, VAL);
                         Tinfer = toc(t2);
                         [sizeI_ddra, wid_ddra_k] = normalize_widths(wid_ddra_k, size(sys_true_dt.C,1), "mean");
                         sizeI_ddra_k = wid_ddra_k;
                     end
                 else
                     % measurement-noise-aware
+                    % Build V_meas to use at INFERENCE, independent of training
+                    nx_inf = size(sys_true_dt.A,1);
+                    if getfielddef(C,'meas',struct('infer_on',false)).infer_on
+                        aInf = max(0, getfielddef(C.meas,'alpha_infer',0));
+                        V_meas_infer = zonotope([zeros(nx_inf,1), aInf*eye(nx_inf)]);
+                    else
+                        V_meas_infer = zonotope(zeros(nx_inf,1));
+                    end
                     t2 = tic;
                     [sizeI_ddra, cval_ddra, wid_ddra_k] = ddra_infer_size_streaming_meas( ...
-                        sys_true_dt, R0, [], W_eff, ABc, AV_one, V_meas, C, VAL);
+                        sys_true_dt, R0, [], W_ddra_used, ABc, AV_one, V_meas_infer, C, VAL);
                     Tinfer = toc(t2);
                     sizeI_ddra_k = wid_ddra_k;
                 end
@@ -502,7 +574,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     % DDRA per-step metrics from VAL only (uses M_AB; fast)
                     try
                         %% ACHTUNG - PLACEHOLDER - HASN'T BEEN IMPLEMENTED YET
-                        [~, cov_ddra_k, fv_ddra, ~] = perstep_ddra_metrics(sys_true_dt, VAL, M_AB, W_used, 60);
+                        [~, cov_ddra_k, fv_ddra, ~] = perstep_ddra_metrics(sys_true_dt, VAL, M_AB, W_ddra_used, 60);
                     catch
                         cov_ddra_k = []; fv_ddra = [];
                     end
@@ -580,14 +652,14 @@ function SUMMARY = run_sweeps(cfg, grid)
                 
                             % Advance PRE→POST for next step
                             if variant == "std"
-                                Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_used;
+                                Xk_rep = M_AB * cartProd(Xk_rep, zonotope(uk)) + W_ddra_used;
                             else
-                                % meas-noise-aware propagation: add V_meas to the regressor for k>1
+                                % meas-noise-aware propagation: add V_meas_infer to the regressor for k>1
                                 X_for_AB = Xk_rep;
-                                if k > 1 && exist('V_meas','var') && ~isempty(generators(V_meas))
-                                    X_for_AB = Xk_rep + V_meas;
+                                if k > 1 && exist('V_meas_infer','var') && ~isempty(generators(V_meas_infer))
+                                    X_for_AB = Xk_rep + V_meas_infer;
                                 end
-                                Xk_rep = ABc * cartProd(X_for_AB, zonotope(uk)) + AV_one + W_used;
+                                Xk_rep = ABc * cartProd(X_for_AB, zonotope(uk)) + AV_one + W_eff;
                             end
 
                         end
@@ -621,6 +693,12 @@ function SUMMARY = run_sweeps(cfg, grid)
                     ctrain_gray, cval_gray, cval_ddra, sizeI_ddra, sizeI_gray, ...
                     Zinfo.rankZ, Zinfo.condZ, ...
                     Tlearn, Tcheck, Tinfer, Tlearn_g, Tvalidate_g, Tinfer_g);
+
+                row.D   = D;                                % requested (sweep) dimension
+                row.nx  = size(sys_cora.A,1);               % realized state dim
+                row.nu  = size(sys_cora.B,2);
+                row.ny  = size(sys_cora.C,1);
+                if isprop(sys_cora,"nrOfDims"); row.nx_report = sys_cora.nrOfDims; end
 
                 % Summaries (AUC_k and FV percentiles)
                 row.cov_auc_gray = mean(cov_gray_k, 'omitnan');
@@ -661,7 +739,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     artifact.sys_gray = configs{idxGray}.sys;     % linearSysDT
                     artifact.sys_ddra = sys_true_dt;              % linearSysDT
                     artifact.VAL      = VAL;  artifact.VAL.R0 = R0;  artifact.VAL.U  = U;
-                    artifact.W_eff    = W_used;                    % actually used in inference
+                    artifact.W_eff    = W_ddra_used;                    % actually used in inference
                     artifact.M_AB     = M_AB;
                     artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
                      'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
@@ -671,7 +749,7 @@ function SUMMARY = run_sweeps(cfg, grid)
                     % artifact.sys_gray = configs{idxGray}.sys;
                     % artifact.sys_ddra = sys_true_dt;
                     % artifact.VAL      = VAL;
-                    % artifact.W_eff    = W_used;
+                    % artifact.W_eff    = W_ddra_used;
                     % artifact.meta     = struct('row', row_index, 'dt', sys_true_dt.dt, ...
                     %   'D', D, 'alpha_w', alpha_w, 'n_m', C.shared.n_m, 'n_s', C.shared.n_s, ...
                     %   'n_k', C.shared.n_k, 'pe', pe, 'save_tag', getfielddef(cfg.io,'save_tag',''), 'schema', 2);
@@ -786,6 +864,16 @@ function SUMMARY = run_sweeps(cfg, grid)
                 row.ddra_lambda      = ridgeInfo.lambda;
                 row.ddra_kappa       = ridgeInfo.kappa;
                 row.ddra_ridge_policy= char(ridgeInfo.policy);
+
+                row.ddra_variant     = string(variant);
+                row.meas_enable      = isfield(C,'meas') && isfield(C.meas,'enable') && C.meas.enable;
+                row.meas_alpha_train = getfielddef(C.meas,'alpha_train',0);
+                row.meas_infer_on    = getfielddef(C.meas,'infer_on',false);
+                row.meas_alpha_infer = getfielddef(C.meas,'alpha_infer',0);
+                
+                % keep legacy column name if downstream expects it
+                if isfield(row,'W_ddra_used_gmean'), row.w_used_gmean = row.W_ddra_used_gmean; end
+
 
                 % --- Initialize schema & write/accumulate ----
                 IO = sweepio_write_row(IO, row);

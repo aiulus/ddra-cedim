@@ -11,12 +11,14 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
     addParameter(p,'externalTS_train',[]);
     addParameter(p,'externalTS_val',[]);
     addParameter(p,'plot_settings',[]);   % [] suppresses plotting in validateReach
+    addParameter(p,'overrideW',[]);      % <— NEW: allow caller to override params.W
     parse(p, varargin{:});
 
     CC        = p.Results.check_contain;
     TS_train  = p.Results.externalTS_train;
     TS_val    = p.Results.externalTS_val;
     PS        = p.Results.plot_settings;
+    W_override = p.Results.overrideW;  
 
     % --- Containment tolerance parity (thread cfg.metrics.tol into configs.*.options.cs)
     tol = 1e-6;
@@ -75,6 +77,29 @@ function [ctrain, cval, Tval, VAL] = gray_containment(configs, sys_cora, R0, U, 
             i_gray = min(2, numel(configs));
         end
     end
+
+    % ---- Ensure disturbance W is used consistently in validation ----
+    nD = 0; 
+    try, nD = configs{i_gray}.sys.nrOfDisturbances; catch, end
+    if nD > 0
+        if ~isempty(W_override)
+            % Caller provided W (already in disturbance space) — use it.
+            configs{i_gray}.params.W = W_override;
+        else
+            % If params.W is missing or empty, default to zero-disturbance (explicit).
+            hasW = false;
+            try
+                Gtmp = generators(configs{i_gray}.params.W); 
+                hasW = ~isempty(Gtmp);
+            catch
+                hasW = false;
+            end
+            if ~hasW
+                configs{i_gray}.params.W = zonotope(zeros(nD,1));
+            end
+        end
+    end
+
 
 
     % ---- TRAIN ----

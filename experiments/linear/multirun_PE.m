@@ -33,6 +33,7 @@ cfg.shared.p_extr = 0.3;
 cfg.shared.options_reach = struct('zonotopeOrder',100,'verbose',false);
 cfg.shared.cs_base = struct('robustnessMargin',1e-9,'verbose',false, ...
                             'cost',"interval",'constraints',"half");
+cfg.shared.cs_base.derivRecomputation = false;  % linear systems: skip re-derives
 
 % Data budgets (train/val)
 cfg.shared.n_m = 10; 
@@ -69,7 +70,7 @@ cfg.metrics.safety = struct('enable', false, 'H', [], 'h', [], ...
 cfg.lowmem = struct('gray_check_contain', true, ...
                     'store_ddra_sets',   false, ...
                     'append_csv',        true, ...
-                    'zonotopeOrder_cap', 50);
+                    'zonotopeOrder_cap', 25);
 
 cfg.allow_parallel = false;
 cfg.io.base_dir    = fileparts(fileparts(mfilename('fullpath'))); 
@@ -78,8 +79,8 @@ cfg.io.base_dir    = fileparts(fileparts(mfilename('fullpath')));
 rcsi_lbl = rcsi_label_from_cfg(cfg);
 
 % --- Sweep grid: choose your PE orders & shapes here ---
-PE_orders = 1:8;                                   % edit me
-% Two example shapes: 'randn' and 'sinwavecs' (use your own modes if needed)
+PE_orders = 1:8;                                  
+% Two example shapes: 'randn' and 'sinwavecs' 
 pe_randn = arrayfun(@(L) struct('mode','randn',    'order',L,'strength',1,  'deterministic',true), PE_orders, 'uni',0);
 pe_sin   = arrayfun(@(L) struct('mode','sinwavecs','order',L,'strength',100,'deterministic',true), PE_orders, 'uni',0);
 
@@ -89,7 +90,8 @@ sweep_grid.alpha_w_list  = cfg.ddra.alpha_w;
 sweep_grid.n_m_list      = cfg.shared.n_m;
 sweep_grid.n_s_list      = cfg.shared.n_s;
 sweep_grid.n_k_list      = cfg.shared.n_k;
-sweep_grid.pe_list       = [pe_randn, pe_sin];     % cell array of structs
+sweep_grid.pe_list = arrayfun(@(L) struct('mode','sinwave', ...
+    'order',L, 'strength',100, 'deterministic',true), PE_orders, 'uni',0);
 
 % Header/legend color palette
 colors = struct('ddra',[0.23 0.49 0.77], 'gray',[0.85 0.33 0.10]);

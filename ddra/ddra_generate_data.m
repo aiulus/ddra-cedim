@@ -199,6 +199,26 @@ function [Xminus, Uminus, Xplus, W, Zinfo, DATASET] = ddra_generate_data(C, sys_
         end
     end
 
+    % ------------------ OPTIONAL: bounded measurement noise on the regressor ------------------
+    try
+        if isfield(C,'meas') && isfield(C.meas,'enable') && C.meas.enable && ...
+           isfield(C.meas,'inject_on_train') && C.meas.inject_on_train && ...
+           isfield(C.meas,'alpha_train') && C.meas.alpha_train > 0
+    
+            nxm = size(Xminus,1);
+            aTr = double(C.meas.alpha_train);
+            Vtr = zonotope([zeros(nxm,1), aTr*eye(nxm)]);
+    
+            % add independent samples to each column of Xminus
+            for j = 1:size(Xminus,2)
+                Xminus(:,j) = Xminus(:,j) + randPoint(Vtr,1);
+            end
+        end
+    catch ME
+        warning('ddra_generate_data:measnoise','Could not inject measurement noise: %s', ME.message);
+    end
+
+
     % ------------------ PE / regressor diagnostics ------------------
     % use first nominal for Hankel stats (clearer than concat)
     U1 = U_nom_all{1};  % (nu × n_k)
